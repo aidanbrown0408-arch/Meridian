@@ -1,0 +1,101 @@
+# Meridian Capital — configuration
+# Every tunable parameter lives here. Code should not hardcode values that appear
+# in this file.
+
+system:
+  name: Meridian Capital
+  version: "1.0"
+  timezone: America/New_York
+  # research | paper | live  — overridden by the CLI subcommand
+  default_mode: research
+
+universe:
+  stocks:
+    - SPY
+    - QQQ
+  crypto:
+    - BTC/USDT
+  # ~2 years of daily bars, per the walk-forward spec
+  history_days: 730
+  bar: 1d
+
+capital:
+  starting_paper_capital: 5000.0
+  currency: USD
+
+data:
+  stock_source: yfinance
+  crypto_source: ccxt
+  crypto_exchange: binance
+  # If a real source fails, Wong generates a seeded random walk instead so the
+  # pipeline never hard-fails. Everything downstream is flagged synthetic.
+  allow_synthetic_fallback: true
+  synthetic_seed: 20240101
+  synthetic:
+    start_price:
+      SPY: 450.0
+      QQQ: 380.0
+      BTC/USDT: 60000.0
+    annual_drift: 0.07
+    annual_vol:
+      default: 0.16
+      BTC/USDT: 0.55
+  cache_dir: data_cache
+  use_cache: true
+  cache_ttl_hours: 12
+
+costs:
+  # bps, one-way. Round-trip is 2x these figures.
+  stocks:
+    commission_bps: 5.0
+    slippage_bps: 5.0
+  crypto:
+    commission_bps: 5.0
+    slippage_bps: 15.0
+
+risk:
+  profile: balanced
+  max_portfolio_drawdown: 0.15
+  max_strategy_drawdown: 0.25
+  max_position_pct: 0.25
+  max_live_traders: 3
+  target_annual_vol: 0.15
+  risk_free_rate: 0.0
+
+validation:
+  folds: 5
+  min_folds_passing: 3
+  min_sharpe: 0.5
+  min_trades_per_fold: 3
+
+strategies:
+  ORBIT:
+    class: OrbitStrategy
+    enabled: true
+    params: {fast: 20, slow: 100}
+  FLUX:
+    class: FluxStrategy
+    enabled: true
+    params: {fast: 10, slow: 50}
+  REVERT:
+    class: RevertStrategy
+    enabled: true
+    params: {period: 14, entry: 30, exit: 55}
+  SURGE:
+    class: SurgeStrategy
+    enabled: true
+    # Upgraded from the 55/20 default during design: higher conviction breakouts.
+    params: {entry_window: 70, exit_window: 30}
+  SPARK:
+    class: SparkStrategy
+    enabled: true
+    params: {entry_window: 20, exit_window: 10}
+  ANCHOR:
+    class: AnchorStrategy
+    enabled: true
+    params: {window: 20, num_std: 2.0}
+
+logging:
+  level: INFO
+  file: reports/meridian.log
+  console: true

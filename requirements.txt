@@ -1,0 +1,6 @@
+# Phase 1 dependencies
+pandas>=2.0
+numpy>=1.24
+PyYAML>=6.0
+yfinance>=0.2.40      # stock OHLCV
+ccxt>=4.2             # crypto OHLCV (Binance public API)
