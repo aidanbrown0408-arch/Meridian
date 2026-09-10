@@ -53,6 +53,18 @@ costs:
     commission_bps: 5.0
     slippage_bps: 15.0
 
+compliance:
+  # "Multi-day gap in the trading-day series." Business days for stocks,
+  # calendar days for crypto. Threshold is business/calendar days between
+  # consecutive bars; a normal weekend or single holiday must never trip
+  # this, so the default tolerates up to a 3-day gap (e.g. a holiday
+  # weekend) before flagging.
+  max_gap_trading_days: 3
+  # "Last data point older than 3 trading days."
+  stale_after_trading_days: 3
+  # >50% day-over-day move suggests an unadjusted corporate action.
+  max_daily_move_pct: 0.50
+
 risk:
   profile: balanced
   max_portfolio_drawdown: 0.15

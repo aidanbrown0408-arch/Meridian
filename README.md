@@ -1,8 +1,10 @@
-# Meridian Capital — Phase 1 (Foundation)
+# Meridian Capital — Phase 2 (Validation & Risk)
 
-Multi-agent trading research desk. This repo currently implements **Phase 1** of the
-build spec: a runnable research pipeline that fetches data, backtests all six traders
-against all three tickers with cost modeling, and prints a ranked results table.
+Multi-agent trading research desk. This repo now implements **Phases 1–2** of the
+build spec: a runnable research pipeline that fetches data, blocks anything with
+broken data, backtests all six traders against all three tickers with cost modeling,
+walk-forward validates the survivors, and turns passing traders into a risk-parity
+capital allocation — all printed as a console report.
 
 Not financial advice. Backtests overfit. Markets change.
 
@@ -15,8 +17,11 @@ Not financial advice. Backtests overfit. Markets change.
 | Strategy base class + all 6 traders | Done |
 | Vectorized backtester with cost modeling | Done |
 | Leo (BacktestAgent) — runs the full cross product | Done |
+| Walk-forward validation — 5 folds, 3-of-5 majority rule | Done |
+| David (ComplianceAgent) — four data-quality checks, blocks per symbol | Done |
+| Charles (RiskAgent) — walk-forward gate, drawdown filter, max-3-live roster, risk parity, correlated ANCHOR/REVERT slot, same-ticker netting | Done |
 | `research` CLI mode with console report | Done |
-| Walk-forward, risk, regime, reporting, execution | Phases 2–5 |
+| Regime detection, HTML/Slack reporting, execution, lifecycle | Phases 3–5 |
 
 `paper`, `live`, and `killswitch` are wired into the CLI but refuse to run and tell you
 which phase they arrive in. Live mode's three gates are not bypassable and are not
@@ -31,23 +36,28 @@ python main.py research
 
 Optional flags: `--symbols SPY QQQ`, `--config path/to/config.yaml`, `--verbose`.
 
-Tests: `python tests/test_phase1.py` (or `python -m pytest tests -q`).
+Tests: `python tests/test_phase1.py && python tests/test_phase2.py`
+(or `python -m pytest tests -q`).
 
 ## Layout
 
 ```
-main.py                     Orchestrator CLI
-config/config.yaml          Every tunable parameter
-agents/data_agent.py        Wong — fetch + synthetic fallback
-agents/backtest_agent.py    Leo — runs all strategy/ticker combinations
-strategies/base.py          Abstract base, registry, next-bar enforcement
+main.py                       Orchestrator CLI
+config/config.yaml            Every tunable parameter
+agents/data_agent.py          Wong — fetch + synthetic fallback
+agents/compliance_agent.py    David — data-quality checks, per-symbol blocking
+agents/backtest_agent.py      Leo — runs all strategy/ticker combinations
+agents/risk_agent.py          Charles — walk-forward gate, risk parity, netting
+strategies/base.py            Abstract base, registry, next-bar enforcement
 strategies/{orbit,flux,revert,surge,spark,anchor}.py
-backtester/engine.py        Vectorized engine + CostModel
+backtester/engine.py          Vectorized engine + CostModel
+backtester/walkforward.py     5-fold walk-forward validator
 utils/{config,logging_setup,metrics}.py
-tests/test_phase1.py        Invariant tests
+tests/test_phase1.py          Phase 1 invariant tests
+tests/test_phase2.py          Phase 2 invariant tests
 ```
 
-## Design decisions worth knowing before Phase 2
+## Design decisions worth knowing
 
 **Next-bar execution is enforced centrally.** `generate_signals()` returns the decision
 made at a bar's close; the one-bar shift happens once in `Strategy.positions()`. No
@@ -79,19 +89,55 @@ loop rather than a vectorized comparison.
 the prior N-day extreme (`.shift(1)`), otherwise today's high would be part of the high
 it's supposed to break.
 
+**Walk-forward folds are scored out-of-sample without a fitting step.** Meridian's
+traders have fixed parameters, so "training window" doesn't mean parameter search — it
+means the strategy's indicators warm up over history that predates the fold, and only
+the fold's own bars are ever scored. `test_walkforward_no_lookahead_across_folds`
+verifies a fold's grade doesn't change when only *later* folds' data is tampered with.
+
+**Majority (3-of-5), not strict or lenient.** Strict (5/5) means nothing ever trades;
+lenient (average-of-folds) lets one great fold hide four losers. The bar is per-fold
+Sharpe/drawdown/trade-count, graded independently — see `WalkForwardValidator._grade`.
+
+**The per-strategy drawdown filter is a hard reject, not folded into walk-forward.**
+Per spec §7, a strategy whose full-period max drawdown exceeds `risk.max_strategy_drawdown`
+is rejected "before any capital is assigned" even if it cleared 3-of-5 folds — two
+independent gates, both must pass.
+
+**A "trader" is a callsign, not a (strategy, symbol) pair.** ORBIT can be validated on
+SPY and BTC/USDT independently; the top-3-by-Sharpe cap in `risk.max_live_traders`
+counts distinct callsigns, ranked by the best Sharpe among each trader's passing
+symbols. A live trader still only sizes positions on the individual symbols it cleared
+walk-forward on — being live overall doesn't license it to trade a symbol it failed.
+
+**ANCHOR and REVERT share one risk-parity slot.** Per spec §7, both are mean-reversion
+traders that tend to trigger on the same conditions; treating them as independent slots
+would silently double true exposure to that bet. `RiskAgent._build_slots` merges them
+into one slot when both are live, and their combined weight is capped at what a single
+solo trader would receive (`test_risk_agent_correlated_pair_shares_one_slot`).
+
+**Netting happens on each trader's already-shifted position, not a fresh signal.**
+`RiskAgent._net_positions` reads the last bar of the same `position` series Leo already
+computed (post next-bar-shift), so "today's signal" here means exactly what the
+backtester would have traded, not a live re-evaluation.
+
 ## Caveats on the current output
 
-Every Sharpe the research mode prints is **in-sample**. There is no walk-forward
-validation until Phase 2, so a good-looking number here is exactly the curve-fit the
-spec warns about. The console report says so on every run.
+Every Sharpe the research mode prints in the RESULTS table is **in-sample** — it's Leo's
+raw backtest, not the validated number. The WALK-FORWARD VALIDATION section is the
+number that matters: a strategy only gets capital if it clears 3-of-5 folds *and* stays
+under the per-strategy drawdown limit. On a short, noisy synthetic series it is normal
+for nothing to pass — the report says so explicitly rather than hiding an empty result,
+per spec §6 ("no delivery is worse than a delivery of 'nothing today'").
 
 In a sandboxed environment with no outbound access to Yahoo or Binance, all three
 symbols fall back to synthetic data and the report flags them. That path is working as
 intended — it is not a data bug.
 
-## Next: Phase 2
+## Next: Phase 3
 
-`backtester/walkforward.py` (5 folds, 3-of-5 rule), `agents/compliance_agent.py`
-(David's four data-quality checks), and `agents/risk_agent.py` (Charles: risk parity,
-position sizing, the shared ANCHOR/REVERT slot). The `blocked` parameter on
-`BacktestAgent.run_all()` is already in place for David to populate.
+`agents/regime_agent.py` (Greg: ADX + slope + vol classifier, the regime-mismatch
+capital cut and 2-day signal confirmation), `agents/reporting_agent.py` (George: the
+navy/gold Playfair HTML dashboard), and the Slack posting utility. Greg's regime call
+layers on top of Charles's risk-parity weights from this phase rather than replacing
+them.
