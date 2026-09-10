@@ -74,6 +74,34 @@ risk:
   target_annual_vol: 0.15
   risk_free_rate: 0.0
 
+regime:
+  # ADX: standard Wilder period. High ADX + a consistently-signed MA slope +
+  # normal-to-high vol => trending. Low ADX + an oscillating slope + price
+  # bouncing inside its recent range => choppy. Neither clearly holding =>
+  # undecided, no adjustment.
+  adx_period: 14
+  adx_trending_threshold: 25.0
+  adx_choppy_threshold: 20.0
+  ma_period: 20
+  # How many of the last `slope_window` daily MA moves must share the same
+  # sign to call the slope "consistent" rather than "oscillating".
+  slope_window: 10
+  slope_consistency_threshold: 0.70
+  vol_window: 20
+  vol_percentile_lookback: 252
+  # Trending requires vol at or above this percentile of its own trailing
+  # distribution -- "normal-to-high", i.e. not a dead-quiet tape.
+  vol_normal_high_percentile: 0.30
+  range_window: 20
+  # Fraction of the last `range_window` bars that must NOT be a new
+  # window-high/low for price to count as "bouncing within its range".
+  range_bound_threshold: 0.70
+  # Regime-mismatch adjustments (spec §8): halve the mismatched trader's
+  # risk-parity weight, and require its signal to hold for this many
+  # consecutive days before the (now smaller) position is trusted.
+  capital_cut: 0.5
+  confirmation_days: 2
+
 validation:
   folds: 5
   min_folds_passing: 3
@@ -106,6 +134,23 @@ strategies:
     class: AnchorStrategy
     enabled: true
     params: {window: 20, num_std: 2.0}
+
+slack:
+  # Everything ships through one incoming webhook. Left unset here on
+  # purpose -- set the MERIDIAN_SLACK_WEBHOOK_URL environment variable
+  # rather than committing a real webhook URL to config.
+  webhook_url_env: MERIDIAN_SLACK_WEBHOOK_URL
+  post_daily_standup: true
+
+visual:
+  # Spec §12 — classic Wall Street: navy/gold, serif.
+  primary_color: "#0F1C33"
+  accent_color: "#D4AF6A"
+  text_on_navy: "#E8E3D3"
+  gain_color: "#7FBF7F"
+  loss_color: "#C97A7A"
+  serif_font: "Playfair Display"
+  body_font: Georgia
 
 logging:
   level: INFO
