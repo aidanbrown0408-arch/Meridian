@@ -25,6 +25,8 @@ import pandas as pd
 from agents.backtest_agent import BacktestAgent
 from agents.compliance_agent import ComplianceAgent
 from agents.data_agent import DataAgent
+from agents.regime_agent import RegimeAgent, RegimeReport
+from agents.reporting_agent import ReportingAgent
 from agents.risk_agent import RiskAgent, RiskReport
 from backtester.engine import results_frame
 from utils.config import load_config
@@ -34,7 +36,7 @@ log = get_logger("orchestrator")
 
 BANNER = r"""
    MERIDIAN CAPITAL
-   multi-agent trading research desk · v1.0 · Phase 2
+   multi-agent trading research desk · v1.0 · Phase 3
 """
 
 PHASE_PENDING = {
@@ -44,14 +46,20 @@ PHASE_PENDING = {
 }
 
 
-def run_research(config, symbols: list[str] | None = None) -> pd.DataFrame:
-    """Fetch, check, backtest, validate, allocate, report. No execution, safe
-    to run any time."""
+def run_research(config, symbols: list[str] | None = None,
+                 post_slack: bool = True) -> pd.DataFrame:
+    """Fetch, check, backtest, validate, classify, allocate, report. No
+    execution, safe to run any time."""
     wong = DataAgent(config)
     market = wong.fetch_universe(symbols)
 
     david = ComplianceAgent(config)
-    blocked = david.blocked_symbols(market)
+    compliance = david.review(market)
+    blocked = {s: r.reason for s, r in compliance.items() if r.blocked}
+    for symbol, reason in blocked.items():
+        log.warning("%s blocked: %s", symbol, reason)
+    if not blocked:
+        log.info("No blocks.")
 
     leo = BacktestAgent(config)
     results = leo.run_all(market, blocked=blocked)
@@ -60,13 +68,22 @@ def run_research(config, symbols: list[str] | None = None) -> pd.DataFrame:
     charles = RiskAgent(config)
     risk_report = charles.run(leo.strategies, market, results)
 
+    greg = RegimeAgent(config)
+    regime_report = greg.run(leo.strategies, market, results, risk_report)
+
+    george = ReportingAgent(config)
+    dashboard = george.run(market, compliance, results, benchmarks, risk_report,
+                           regime_report, post_slack=post_slack)
+
     frame = results_frame(results)
-    _print_report(config, market, frame, benchmarks, blocked, risk_report)
+    _print_report(config, market, frame, benchmarks, blocked, risk_report,
+                  regime_report, dashboard)
     return frame
 
 
 def _print_report(config, market, frame: pd.DataFrame, benchmarks: dict,
-                  blocked: dict, risk_report: RiskReport) -> None:
+                  blocked: dict, risk_report: RiskReport,
+                  regime_report: RegimeReport, dashboard) -> None:
     """Console stand-in for George's dashboard, which lands in Phase 3."""
     print("\n" + "=" * 78)
     print(f"  RESEARCH REPORT — {datetime.now():%Y-%m-%d %H:%M}")
@@ -107,16 +124,31 @@ def _print_report(config, market, frame: pd.DataFrame, benchmarks: dict,
               f"MaxDD {summary.max_drawdown * 100:6.2f}%")
 
     _print_validation(config, risk_report)
-    _print_allocation(risk_report)
+    _print_regime(regime_report)
+    _print_allocation(risk_report, regime_report)
 
     synthetic = [s for s, d in market.items() if d.is_synthetic]
     if synthetic:
         print(f"\n  ⚠ {', '.join(synthetic)} used synthetic data. These numbers describe"
               "\n    a random walk, not a market. Do not act on them.")
 
-    print("\n  Phase 3 adds regime detection and the Slack dashboard. Until then"
-          "\n  this console report and the walk-forward gate above are it.")
+    print("\n  DASHBOARD (George)")
+    if dashboard.html_path is not None:
+        print(f"    HTML report: {dashboard.html_path}")
+    print(f"    Slack: {'posted' if dashboard.posted_to_slack else 'not posted (see log above)'}")
+    print("    Standup message:")
+    for line in dashboard.standup_text.splitlines():
+        print(f"      {line}")
+
+    print("\n  Phase 4 adds paper execution and the persisted $5,000 ledger. Until"
+          "\n  then this is a target allocation, not a live position.")
     print("=" * 78 + "\n")
+
+
+def _print_regime(regime_report: RegimeReport) -> None:
+    print("\n  REGIME (Greg)")
+    for symbol, c in regime_report.regimes.items():
+        print(f"    {symbol:<10} {c.regime:<10} {c.detail}")
 
 
 def _print_validation(config, risk_report: RiskReport) -> None:
@@ -138,8 +170,8 @@ def _print_validation(config, risk_report: RiskReport) -> None:
         print("    This is deliberate: no delivery is worse than 'nothing today.'")
 
 
-def _print_allocation(risk_report: RiskReport) -> None:
-    print(f"\n  RISK & ALLOCATION (Charles) — max {len(risk_report.live_traders) or 0} of "
+def _print_allocation(risk_report: RiskReport, regime_report: RegimeReport) -> None:
+    print(f"\n  RISK & ALLOCATION (Charles + Greg) — {len(risk_report.live_traders) or 0} of "
           f"{len(risk_report.live_traders) + len(risk_report.benched_traders)} traders live")
     if risk_report.live_traders:
         for slot in risk_report.slots:
@@ -147,7 +179,7 @@ def _print_allocation(risk_report: RiskReport) -> None:
             print(f"    LIVE  {label:<16} slot weight {slot.weight * 100:5.1f}%")
             for member in slot.members:
                 weight = slot.member_weights.get(member, 0.0)
-                print(f"          {member:<8} weight {weight * 100:5.1f}%  "
+                print(f"          {member:<8} base weight {weight * 100:5.1f}%  "
                       f"${risk_report.dollars(member):,.0f}")
     else:
         print("    No traders live today.")
@@ -157,14 +189,24 @@ def _print_allocation(risk_report: RiskReport) -> None:
         for trader, reason in sorted(risk_report.benched_traders.items()):
             print(f"    🪑 {trader:<8} {reason}")
 
-    if any(p.contributors for p in risk_report.netted_positions.values()):
-        print("\n    NETTED POSITIONS")
-        for symbol, pos in risk_report.netted_positions.items():
+    if regime_report.adjustments:
+        print("\n    REGIME ADJUSTMENTS")
+        for adj in regime_report.adjustments:
+            status = "matched" if adj.matched else ("confirmed" if adj.confirmed else "unconfirmed")
+            print(f"    {adj.strategy:<8} {adj.symbol:<10} {adj.regime:<10} {status:<11} "
+                  f"{adj.base_weight * 100:5.1f}% -> {adj.adjusted_weight * 100:5.1f}%  "
+                  f"{adj.note}")
+
+    if any(p.contributors for p in regime_report.netted_positions.values()):
+        print("\n    TARGET ALLOCATION (post-regime)")
+        for symbol, pos in regime_report.netted_positions.items():
             if not pos.contributors:
                 continue
             cap = "  (capped)" if pos.capped else ""
             print(f"    {symbol:<10} {pos.target_weight * 100:5.1f}% of capital"
                   f"{cap}  <- {', '.join(pos.contributors)}")
+    else:
+        print("\n    No target positions today.")
 
 
 def build_parser() -> argparse.ArgumentParser:

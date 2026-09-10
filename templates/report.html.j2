@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Meridian Capital — Daily Dashboard</title>
+<style>
+  :root {
+    --navy: #0F1C33;
+    --gold: #D4AF6A;
+    --parchment: #E8E3D3;
+    --gain: #7FBF7F;
+    --loss: #C97A7A;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--navy);
+    color: var(--parchment);
+    font-family: Georgia, 'Times New Roman', serif;
+    padding: 32px 24px 64px;
+  }
+  h1, h2, .wordmark {
+    font-family: 'Playfair Display', Georgia, serif;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+
+  header.masthead {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    border-bottom: 1px solid var(--gold);
+    padding-bottom: 18px;
+    margin-bottom: 28px;
+  }
+  header.masthead .titles { flex: 1; }
+  .wordmark {
+    font-size: 28px;
+    letter-spacing: 4px;
+    margin: 0;
+    color: var(--parchment);
+  }
+  .tagline { margin: 4px 0 0; color: var(--gold); font-size: 13px; letter-spacing: 1px; }
+  .generated { margin: 2px 0 0; font-size: 12px; color: #9aa5bd; }
+
+  section { margin-bottom: 34px; }
+  h2 {
+    font-size: 15px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--gold);
+    border-bottom: 1px solid #2A3B5C;
+    padding-bottom: 8px;
+    margin-bottom: 14px;
+  }
+
+  .metrics-row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .metric {
+    flex: 1 1 180px;
+    background: #142544;
+    border: 1px solid #2A3B5C;
+    border-radius: 6px;
+    padding: 14px 16px;
+  }
+  .metric .label { font-size: 11px; letter-spacing: 1px; color: var(--gold); text-transform: uppercase; }
+  .metric .value { font-size: 22px; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #24365a; }
+  th { color: var(--gold); font-weight: normal; letter-spacing: 0.5px; font-size: 11px; text-transform: uppercase; }
+  tr:last-child td { border-bottom: none; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pos { color: var(--gain); }
+  .neg { color: var(--loss); }
+  .pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+  }
+  .pill.blocked { background: rgba(201,122,122,0.25); color: var(--loss); }
+  .pill.trending { background: rgba(127,191,127,0.2); color: var(--gain); }
+  .pill.choppy { background: rgba(212,175,106,0.2); color: var(--gold); }
+  .pill.undecided { background: rgba(154,165,189,0.2); color: #9aa5bd; }
+  .pill.live { background: rgba(127,191,127,0.2); color: var(--gain); }
+  .pill.benched { background: rgba(154,165,189,0.2); color: #9aa5bd; }
+
+  .note { font-size: 12px; color: #9aa5bd; margin-top: 8px; }
+  .warning {
+    border-left: 3px solid var(--gold);
+    background: #142544;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: var(--gold);
+  }
+  .empty { color: #9aa5bd; font-style: italic; font-size: 13px; }
+  svg { width: 100%; height: auto; border-radius: 6px; border: 1px solid #2A3B5C; }
+  .chart-grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
+  footer { text-align: center; font-size: 11px; color: #5f6c8a; margin-top: 40px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="masthead">
+    <svg viewBox="0 0 60 60" width="60" height="60" aria-label="Meridian Capital compass rose">
+      <circle cx="30" cy="30" r="26" fill="none" stroke="#D4AF6A" stroke-width="1.5"/>
+      <circle cx="30" cy="30" r="18" fill="none" stroke="#D4AF6A" stroke-width="1"/>
+      <line x1="30" y1="6"  x2="30" y2="54" stroke="#D4AF6A" stroke-width="0.75"/>
+      <line x1="6"  y1="30" x2="54" y2="30" stroke="#D4AF6A" stroke-width="0.75"/>
+      <line x1="48.38" y1="11.62" x2="51.21" y2="8.79"  stroke="#D4AF6A" stroke-width="1"/>
+      <line x1="48.38" y1="48.38" x2="51.21" y2="51.21" stroke="#D4AF6A" stroke-width="1"/>
+      <line x1="11.62" y1="48.38" x2="8.79"  y2="51.21" stroke="#D4AF6A" stroke-width="1"/>
+      <line x1="11.62" y1="11.62" x2="8.79"  y2="8.79"  stroke="#D4AF6A" stroke-width="1"/>
+      <line x1="30" y1="4"  x2="30" y2="0"  stroke="#D4AF6A" stroke-width="1"/>
+      <line x1="30" y1="56" x2="30" y2="60" stroke="#D4AF6A" stroke-width="1"/>
+      <line x1="56" y1="30" x2="60" y2="30" stroke="#D4AF6A" stroke-width="1"/>
+      <line x1="4"  y1="30" x2="0"  y2="30" stroke="#D4AF6A" stroke-width="1"/>
+      <polygon points="30,10 27,30 33,30" fill="#D4AF6A"/>
+      <polygon points="30,50 27,30 33,30" fill="none" stroke="#D4AF6A" stroke-width="1"/>
+      <circle cx="30" cy="30" r="2" fill="#D4AF6A"/>
+    </svg>
+    <div class="titles">
+      <p class="wordmark">MERIDIAN CAPITAL</p>
+      <p class="tagline">multi-agent trading research desk</p>
+      <p class="generated">{{ generated_at }}</p>
+    </div>
+  </header>
+
+  <section>
+    <h2>Key Metrics</h2>
+    <div class="metrics-row">
+      <div class="metric">
+        <div class="label">Starting Paper Capital</div>
+        <div class="value">${{ "{:,.0f}".format(starting_capital) }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Live Traders</div>
+        <div class="value">{{ live_traders|length }} / {{ (live_traders|length) + (benched_traders|length) }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">vs. SPY Buy-and-Hold</div>
+        {% set spy = benchmark_rows|selectattr("symbol", "equalto", "SPY")|list %}
+        <div class="value {{ 'pos' if spy and spy[0].cagr >= 0 else 'neg' }}">
+          {{ "%.2f"|format(spy[0].cagr) if spy else "n/a" }}%
+        </div>
+      </div>
+    </div>
+    <p class="note">No live P&amp;L yet — paper trading begins Phase 4. Metrics above describe
+      today's research run, not a funded account.</p>
+  </section>
+
+  {% if synthetic_symbols %}
+  <section>
+    <div class="warning">⚠ {{ synthetic_symbols|join(', ') }} used synthetic data today. Every
+      number touching {{ synthetic_symbols|join(', ') }} describes a random walk, not a market —
+      do not act on it.</div>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>Target Allocation (post-regime)</h2>
+    {% if target_rows %}
+    <table>
+      <tr><th>Ticker</th><th class="num">Target %</th><th class="num">Target $</th><th>Contributors</th><th></th></tr>
+      {% for row in target_rows %}
+      <tr>
+        <td>{{ row.symbol }}</td>
+        <td class="num">{{ "%.1f"|format(row.target_pct) }}%</td>
+        <td class="num">${{ "{:,.0f}".format(row.target_dollars) }}</td>
+        <td>{{ row.contributors }}</td>
+        <td>{% if row.capped %}<span class="pill blocked">capped</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">No traders live today — no target positions. This is deliberate: no
+      delivery is worse than a delivery of "nothing today."</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Charts</h2>
+    <div class="chart-grid">
+      {{ equity_chart }}
+      {{ drawdown_chart }}
+      {{ trader_bar_chart }}
+    </div>
+  </section>
+
+  <section>
+    <h2>Data (Wong)</h2>
+    <table>
+      <tr><th>Symbol</th><th class="num">Bars</th><th>Source</th><th>Last</th><th></th></tr>
+      {% for row in data_rows %}
+      <tr>
+        <td>{{ row.symbol }}</td>
+        <td class="num">{{ row.bars }}</td>
+        <td>{{ row.source }}</td>
+        <td>{{ row.last_date }}</td>
+        <td>{% if row.synthetic %}<span class="pill blocked">synthetic</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section>
+    <h2>Compliance (David)</h2>
+    {% if compliance_rows %}
+    <table>
+      <tr><th>Symbol</th><th>Reason</th></tr>
+      {% for row in compliance_rows %}
+      <tr><td>{{ row.symbol }}</td><td>{{ row.reason }}</td></tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">No blocks.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Regime (Greg)</h2>
+    <table>
+      <tr><th>Symbol</th><th>Regime</th><th class="num">ADX</th><th>Detail</th></tr>
+      {% for row in regime_rows %}
+      <tr>
+        <td>{{ row.symbol }}</td>
+        <td><span class="pill {{ row.regime }}">{{ row.regime }}</span></td>
+        <td class="num">{{ row.adx }}</td>
+        <td>{{ row.detail }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section>
+    <h2>Walk-Forward Validation (Charles)</h2>
+    <table>
+      <tr><th>Strategy</th><th>Symbol</th><th class="num">Folds</th><th class="num">Sharpe</th>
+          <th class="num">Max DD</th><th></th><th>Reason</th></tr>
+      {% for row in validation_rows %}
+      <tr>
+        <td>{{ row.strategy }}</td>
+        <td>{{ row.symbol }}</td>
+        <td class="num">{{ row.folds_passed }}/{{ row.folds_total }}</td>
+        <td class="num">{{ row.sharpe }}</td>
+        <td class="num">{{ row.max_drawdown }}%</td>
+        <td>{% if row.eligible %}<span class="pill live">pass</span>{% else %}<span class="pill blocked">fail</span>{% endif %}</td>
+        <td>{{ row.reject_reason }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <section>
+    <h2>Risk &amp; Allocation (Charles + Greg)</h2>
+    <p><strong>Live:</strong>
+      {% if live_traders %}
+        {% for t in live_traders %}<span class="pill live">{{ t }}</span> {% endfor %}
+      {% else %}
+        <span class="empty">none today</span>
+      {% endif %}
+    </p>
+    {% if benched_traders %}
+    <p><strong>Benched:</strong></p>
+    <table>
+      <tr><th>Trader</th><th>Reason</th></tr>
+      {% for trader, reason in benched_traders %}
+      <tr><td><span class="pill benched">{{ trader }}</span></td><td>{{ reason }}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+    {% if allocation_rows %}
+    <p style="margin-top:16px;"><strong>Regime-adjusted weights:</strong></p>
+    <table>
+      <tr><th>Strategy</th><th>Symbol</th><th>Regime</th><th></th>
+          <th class="num">Base %</th><th class="num">Adjusted %</th><th>Note</th></tr>
+      {% for row in allocation_rows %}
+      <tr>
+        <td>{{ row.strategy }}</td>
+        <td>{{ row.symbol }}</td>
+        <td><span class="pill {{ row.regime }}">{{ row.regime }}</span></td>
+        <td>{% if row.matched %}<span class="pill live">matched</span>{% else %}<span class="pill benched">mismatched</span>{% endif %}</td>
+        <td class="num">{{ row.base_weight }}%</td>
+        <td class="num">{{ row.adjusted_weight }}%</td>
+        <td>{{ row.note }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Buy-and-Hold Benchmark</h2>
+    <table>
+      <tr><th>Symbol</th><th class="num">Sharpe</th><th class="num">CAGR</th><th class="num">Max DD</th></tr>
+      {% for row in benchmark_rows %}
+      <tr>
+        <td>{{ row.symbol }}</td>
+        <td class="num">{{ row.sharpe }}</td>
+        <td class="num {{ 'pos' if row.cagr >= 0 else 'neg' }}">{{ row.cagr }}%</td>
+        <td class="num">{{ row.max_drawdown }}%</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </section>
+
+  <footer>
+    Not financial advice. Backtests overfit. Markets change. — Meridian Capital v1.0
+  </footer>
+</div>
+</body>
+</html>

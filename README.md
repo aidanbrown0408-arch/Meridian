@@ -1,10 +1,11 @@
-# Meridian Capital — Phase 2 (Validation & Risk)
+# Meridian Capital — Phase 3 (Regime & Reporting)
 
-Multi-agent trading research desk. This repo now implements **Phases 1–2** of the
+Multi-agent trading research desk. This repo now implements **Phases 1–3** of the
 build spec: a runnable research pipeline that fetches data, blocks anything with
 broken data, backtests all six traders against all three tickers with cost modeling,
-walk-forward validates the survivors, and turns passing traders into a risk-parity
-capital allocation — all printed as a console report.
+walk-forward validates the survivors, turns passing traders into a risk-parity
+capital allocation, classifies each ticker's regime and tilts capital accordingly,
+and renders the whole thing as a navy/gold HTML dashboard plus a Slack standup post.
 
 Not financial advice. Backtests overfit. Markets change.
 
@@ -20,8 +21,10 @@ Not financial advice. Backtests overfit. Markets change.
 | Walk-forward validation — 5 folds, 3-of-5 majority rule | Done |
 | David (ComplianceAgent) — four data-quality checks, blocks per symbol | Done |
 | Charles (RiskAgent) — walk-forward gate, drawdown filter, max-3-live roster, risk parity, correlated ANCHOR/REVERT slot, same-ticker netting | Done |
+| Greg (RegimeAgent) — ADX + slope + vol classifier, regime-mismatch capital cut + 2-day confirmation | Done |
+| George (ReportingAgent) — navy/gold Playfair HTML dashboard, Slack standup message | Done |
 | `research` CLI mode with console report | Done |
-| Regime detection, HTML/Slack reporting, execution, lifecycle | Phases 3–5 |
+| Execution, lifecycle/benching, live gate | Phases 4–5 |
 
 `paper`, `live`, and `killswitch` are wired into the CLI but refuse to run and tell you
 which phase they arrive in. Live mode's three gates are not bypassable and are not
@@ -36,7 +39,12 @@ python main.py research
 
 Optional flags: `--symbols SPY QQQ`, `--config path/to/config.yaml`, `--verbose`.
 
-Tests: `python tests/test_phase1.py && python tests/test_phase2.py`
+To actually post the daily standup to Slack, set `MERIDIAN_SLACK_WEBHOOK_URL` in the
+environment before running — without it, the message is logged, not sent, and the run
+still succeeds. The HTML dashboard always writes to `reports/meridian_YYYYMMDD.html`
+and `reports/latest.html` (gitignored).
+
+Tests: `python tests/test_phase1.py && python tests/test_phase2.py && python tests/test_phase3.py`
 (or `python -m pytest tests -q`).
 
 ## Layout
@@ -48,13 +56,17 @@ agents/data_agent.py          Wong — fetch + synthetic fallback
 agents/compliance_agent.py    David — data-quality checks, per-symbol blocking
 agents/backtest_agent.py      Leo — runs all strategy/ticker combinations
 agents/risk_agent.py          Charles — walk-forward gate, risk parity, netting
+agents/regime_agent.py        Greg — ADX/slope/vol classifier, mismatch capital cut
+agents/reporting_agent.py     George — HTML dashboard + Slack standup
 strategies/base.py            Abstract base, registry, next-bar enforcement
 strategies/{orbit,flux,revert,surge,spark,anchor}.py
 backtester/engine.py          Vectorized engine + CostModel
 backtester/walkforward.py     5-fold walk-forward validator
-utils/{config,logging_setup,metrics}.py
+templates/report.html.j2      Jinja2 dashboard template (navy/gold Playfair)
+utils/{config,logging_setup,metrics,svg_charts,slack}.py
 tests/test_phase1.py          Phase 1 invariant tests
 tests/test_phase2.py          Phase 2 invariant tests
+tests/test_phase3.py          Phase 3 invariant tests
 ```
 
 ## Design decisions worth knowing
@@ -117,9 +129,38 @@ into one slot when both are live, and their combined weight is capped at what a 
 solo trader would receive (`test_risk_agent_correlated_pair_shares_one_slot`).
 
 **Netting happens on each trader's already-shifted position, not a fresh signal.**
-`RiskAgent._net_positions` reads the last bar of the same `position` series Leo already
-computed (post next-bar-shift), so "today's signal" here means exactly what the
-backtester would have traded, not a live re-evaluation.
+`RiskAgent._net_positions` (and Greg's regime-aware `_net_positions`) reads the last bar
+of the same `position` series Leo already computed (post next-bar-shift), so "today's
+signal" means exactly what the backtester would have traded, not a live re-evaluation.
+
+**Regime classification requires every sub-condition to hold, or it's undecided.**
+Trending needs high ADX *and* a consistently-signed MA slope *and* normal-to-high
+realized vol, all at once; choppy needs the mirror image. A clean, high-drift geometric
+random walk clears trending; a fast, tight oscillation clears choppy — see
+`test_regime_classifies_a_clean_trend_as_trending` / `..._tight_bounce_as_choppy`. A
+fixed-dollar-step ramp deliberately is **not** used as the trending fixture: its
+*percentage* volatility shrinks as price compounds up, which would starve the
+vol-percentile check for reasons that have nothing to do with trendiness.
+
+**Regime-mismatch is a tilt, never a bench.** A mismatched trader's weight is halved
+(`regime.capital_cut`) and its position only counts once it has held steady for
+`regime.confirmation_days` bars — filtering single-day noise without ever zeroing the
+trader out entirely, per spec §8's "every trader stays in the game." Matched traders and
+undecided-regime tickers trade at full weight with no extra delay.
+
+**The confirmation window reads the already-shifted position series, not raw signals.**
+Since Phase 4's persisted daily execution loop doesn't exist yet, "held steady for N
+days" is checked against the same lagged `position` series the backtester produced,
+which is the only place "what actually got traded" lives right now. This will get
+revisited once Cornelius's paper broker gives us real day-over-day state.
+
+**No charting library.** `utils/svg_charts.py` hand-builds `<svg>` markup (a multi-series
+line chart and a signed bar chart) so the dashboard stays a single dependency-free HTML
+file. Colors are the spec's navy/gold/parchment/gain/loss palette, not a generic theme.
+
+**Slack posting never raises.** `utils/slack.py` POSTs via stdlib `urllib`, returns
+`False` on any failure or missing webhook, and always logs the message it would have
+sent — a Slack outage must never take down the research pipeline.
 
 ## Caveats on the current output
 
@@ -130,14 +171,16 @@ under the per-strategy drawdown limit. On a short, noisy synthetic series it is 
 for nothing to pass — the report says so explicitly rather than hiding an empty result,
 per spec §6 ("no delivery is worse than a delivery of 'nothing today'").
 
+There is no live P&L yet — Cornelius's PaperBroker is Phase 4. The dashboard's "Target
+Allocation" section is exactly that: a target, not a fill. Every chart is labeled
+"backtest, in-sample" for the same reason.
+
 In a sandboxed environment with no outbound access to Yahoo or Binance, all three
 symbols fall back to synthetic data and the report flags them. That path is working as
 intended — it is not a data bug.
 
-## Next: Phase 3
+## Next: Phase 4
 
-`agents/regime_agent.py` (Greg: ADX + slope + vol classifier, the regime-mismatch
-capital cut and 2-day signal confirmation), `agents/reporting_agent.py` (George: the
-navy/gold Playfair HTML dashboard), and the Slack posting utility. Greg's regime call
-layers on top of Charles's risk-parity weights from this phase rather than replacing
-them.
+`agents/portfolio_agent.py` (Cornelius: `ResearchExecutor` no-op + `PaperBroker` with a
+persisted $5,000 JSON ledger), the strategy benching lifecycle (validation-fail
+auto-reinstate vs. live-drift manual-clear, per spec §10), and the killswitch command.
