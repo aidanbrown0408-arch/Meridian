@@ -32,10 +32,11 @@ from agents.backtest_agent import BacktestAgent
 from agents.compliance_agent import ComplianceAgent
 from agents.data_agent import DataAgent
 from agents.lifecycle_agent import LifecycleAgent
-from agents.portfolio_agent import PaperBroker
+from agents.portfolio_agent import LiveBroker, PaperBroker
 from agents.regime_agent import RegimeAgent, RegimeReport
 from agents.reporting_agent import ReportingAgent
 from agents.risk_agent import RiskAgent, RiskReport
+from agents.sentiment_agent import SentimentAgent
 from backtester.engine import results_frame
 from utils.config import load_config
 from utils.logging_setup import get_logger, setup_logging
@@ -44,19 +45,18 @@ log = get_logger("orchestrator")
 
 BANNER = r"""
    MERIDIAN CAPITAL
-   multi-agent trading research desk · v1.0 · Phase 4
+   multi-agent trading research desk · v1.0 · Phase 5
 """
-
-PHASE_PENDING = {
-    "live": ("Phase 5", "LiveBroker stub plus the three-gate refusal logic"),
-}
 
 
 # ------------------------------------------------------------------ shared pipeline
 
 def _run_pipeline(config, symbols: list[str] | None = None):
-    """Wong -> David -> Leo -> Charles -> Greg. Shared by research and paper
-    mode; execution (Cornelius) is the only thing that differs between them."""
+    """Wong -> David -> Leo -> Charles -> Greg -> Edwin. Shared by research
+    and paper mode; execution (Cornelius) is the only thing that differs
+    between them. Edwin's sentiment read is informational only -- it never
+    feeds back into Charles's or Greg's decisions, so it runs last and
+    can't affect anything upstream of it."""
     wong = DataAgent(config)
     market = wong.fetch_universe(symbols)
 
@@ -78,7 +78,11 @@ def _run_pipeline(config, symbols: list[str] | None = None):
     greg = RegimeAgent(config)
     regime_report = greg.run(leo.strategies, market, results, risk_report)
 
-    return market, compliance, blocked, leo, results, benchmarks, risk_report, regime_report
+    edwin = SentimentAgent(config)
+    sentiment_report = edwin.run(market)
+
+    return (market, compliance, blocked, leo, results, benchmarks, risk_report,
+           regime_report, sentiment_report)
 
 
 def _apply_lifecycle_bench(risk_report: RiskReport, lifecycle: LifecycleAgent,
@@ -118,20 +122,20 @@ def run_research(config, symbols: list[str] | None = None,
                  post_slack: bool = True) -> pd.DataFrame:
     """Fetch, check, backtest, validate, classify, allocate, report. No
     execution, safe to run any time."""
-    market, compliance, blocked, leo, results, benchmarks, risk_report, regime_report = (
-        _run_pipeline(config, symbols))
+    (market, compliance, blocked, leo, results, benchmarks, risk_report,
+     regime_report, sentiment_report) = _run_pipeline(config, symbols)
 
     lifecycle, state = _lifecycle_step(config, leo, risk_report)
     recommendations = lifecycle.recommend(state, {}, {})
 
     george = ReportingAgent(config)
     dashboard = george.run(market, compliance, results, benchmarks, risk_report,
-                           regime_report, recommendations=recommendations,
-                           post_slack=post_slack)
+                           regime_report, sentiment_report=sentiment_report,
+                           recommendations=recommendations, post_slack=post_slack)
 
     frame = results_frame(results)
     _print_report(config, market, frame, benchmarks, blocked, risk_report,
-                  regime_report, dashboard, recommendations, ledger=None)
+                  regime_report, sentiment_report, dashboard, recommendations, ledger=None)
     return frame
 
 
@@ -140,8 +144,8 @@ def run_research(config, symbols: list[str] | None = None,
 def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True):
     """Same pipeline as research, plus Cornelius's simulated fills against
     the persisted paper ledger."""
-    market, compliance, blocked, leo, results, benchmarks, risk_report, regime_report = (
-        _run_pipeline(config, symbols))
+    (market, compliance, blocked, leo, results, benchmarks, risk_report,
+     regime_report, sentiment_report) = _run_pipeline(config, symbols)
 
     lifecycle, state = _lifecycle_step(config, leo, risk_report)
     # Re-run Greg's netting now that any operator bench has pulled traders
@@ -161,12 +165,12 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
 
     george = ReportingAgent(config)
     dashboard = george.run(market, compliance, results, benchmarks, risk_report,
-                           regime_report, ledger=ledger, recommendations=recommendations,
-                           post_slack=post_slack)
+                           regime_report, sentiment_report=sentiment_report, ledger=ledger,
+                           recommendations=recommendations, post_slack=post_slack)
 
     frame = results_frame(results)
     _print_report(config, market, frame, benchmarks, blocked, risk_report,
-                  regime_report, dashboard, recommendations, ledger=ledger)
+                  regime_report, sentiment_report, dashboard, recommendations, ledger=ledger)
     return frame
 
 
@@ -174,7 +178,7 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
 
 def _print_report(config, market, frame: pd.DataFrame, benchmarks: dict,
                   blocked: dict, risk_report: RiskReport,
-                  regime_report: RegimeReport, dashboard,
+                  regime_report: RegimeReport, sentiment_report: dict, dashboard,
                   recommendations: list, ledger=None) -> None:
     print("\n" + "=" * 78)
     label = "PAPER" if ledger is not None else "RESEARCH"
@@ -217,6 +221,7 @@ def _print_report(config, market, frame: pd.DataFrame, benchmarks: dict,
 
     _print_validation(config, risk_report)
     _print_regime(regime_report)
+    _print_sentiment(sentiment_report)
     _print_allocation(risk_report, regime_report)
     _print_lifecycle(recommendations)
     if ledger is not None:
@@ -245,6 +250,20 @@ def _print_regime(regime_report: RegimeReport) -> None:
     print("\n  REGIME (Greg)")
     for symbol, c in regime_report.regimes.items():
         print(f"    {symbol:<10} {c.regime:<10} {c.detail}")
+
+
+def _print_sentiment(sentiment_report: dict) -> None:
+    print("\n  NEWS SENTIMENT (Edwin) — informational only, never gates a strategy")
+    if not sentiment_report:
+        print("    No symbols to read.")
+        return
+    for symbol, snap in sentiment_report.items():
+        if not snap.available:
+            print(f"    {symbol:<10} unavailable — {snap.note}")
+            continue
+        headline = f"  \"{snap.top_headline}\"" if snap.top_headline else ""
+        print(f"    {symbol:<10} {snap.label:<17} score {snap.score:+.2f}  "
+              f"({snap.article_count} article(s)){headline}")
 
 
 def _print_validation(config, risk_report: RiskReport) -> None:
@@ -356,6 +375,48 @@ def run_clear_halt(config) -> int:
     return 0
 
 
+def run_live(config, risk_ack: bool) -> int:
+    """The three-gate refusal check (spec §13). Every gate is independent and
+    every gate must pass -- there is no combination of flags that bypasses
+    any one of them:
+
+      1. implementation gate -- LiveBroker.IMPLEMENTED. Still False; Phase 5
+         ships only the stub, deliberately, so live trading cannot start
+         just because someone flips a config flag.
+      2. config gate -- live.enable_live_trading must be true in config.yaml.
+      3. operator gate -- --i-understand-the-risk must be passed on the CLI.
+
+    Failing any gate refuses the run and explains exactly which gate(s)
+    failed. This function never places an order."""
+    gates = [
+        ("implementation", LiveBroker.IMPLEMENTED,
+         "LiveBroker has no real broker adapter yet -- it's a stub."),
+        ("config", bool(config.get("live.enable_live_trading", False)),
+         "live.enable_live_trading is not true in config.yaml."),
+        ("operator", risk_ack,
+         "--i-understand-the-risk was not passed on the command line."),
+    ]
+
+    log.error("LIVE MODE requested -- evaluating the three-gate refusal check (spec §13):")
+    for name, passed, detail in gates:
+        mark = "PASS" if passed else "FAIL"
+        log.error("  [%s] %-14s gate%s", mark, name, "" if passed else f" -- {detail}")
+
+    if not all(passed for _, passed, _ in gates):
+        log.error("Live trading refused. Every gate above must pass; none is bypassable "
+                  "by flags, config, or combinations of the two.")
+        return 2
+
+    # Unreachable while the implementation gate stays honest: even with
+    # config + operator ack, LiveBroker.execute() still raises.
+    try:
+        LiveBroker(config).execute()
+        return 0
+    except NotImplementedError as exc:
+        log.error("Live trading refused -- %s", exc)
+        return 2
+
+
 def run_bench(config, trader: str | None, trigger: str, reason: str, unbench: bool) -> int:
     if not trader:
         log.error("--trader is required for %s.", "unbench" if unbench else "bench")
@@ -419,15 +480,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode in ("bench", "unbench"):
         return run_bench(config, args.trader, args.trigger, args.reason,
                          unbench=(args.mode == "unbench"))
-
-    phase, what = PHASE_PENDING[args.mode]
-    log.error("Mode '%s' is not implemented yet — it arrives in %s (%s).",
-              args.mode, phase, what)
     if args.mode == "live":
-        log.error("Live mode will still require all three gates: a real "
-                  "LiveBroker implementation, enable_live_trading: true in "
-                  "config, and --i-understand-the-risk.")
-    return 2
+        return run_live(config, args.risk_ack)
+
+    return 2  # pragma: no cover - unreachable, argparse restricts `mode`
 
 
 if __name__ == "__main__":

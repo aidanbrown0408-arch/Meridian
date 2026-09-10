@@ -68,10 +68,13 @@ class ReportingAgent:
     def run(self, market: dict[str, MarketData], compliance: dict[str, ComplianceReport],
             results: list[BacktestResult], benchmarks: dict[str, PerformanceSummary],
             risk_report: RiskReport, regime_report: RegimeReport,
-            ledger=None, recommendations: list | None = None,
+            sentiment_report: dict | None = None, ledger=None,
+            recommendations: list | None = None,
             write_file: bool = True, post_slack: bool = True) -> DashboardResult:
+        sentiment_report = sentiment_report or {}
         context = self._build_context(market, compliance, results, benchmarks,
-                                       risk_report, regime_report, ledger, recommendations)
+                                       risk_report, regime_report, sentiment_report,
+                                       ledger, recommendations)
         html = self.env.get_template("report.html.j2").render(**context)
 
         html_path = None
@@ -79,7 +82,7 @@ class ReportingAgent:
             html_path = self._write_html(html)
 
         standup_text = self.build_standup_text(market, compliance, risk_report, regime_report,
-                                                ledger, recommendations)
+                                                sentiment_report, ledger, recommendations)
         posted = False
         if post_slack and self.post_enabled:
             if self._is_standup_day():
@@ -107,6 +110,7 @@ class ReportingAgent:
 
     def _build_context(self, market, compliance, results, benchmarks,
                        risk_report: RiskReport, regime_report: RegimeReport,
+                       sentiment_report: dict | None = None,
                        ledger=None, recommendations: list | None = None) -> dict:
         by_key = {(r.strategy, r.symbol): r for r in results}
 
@@ -151,6 +155,12 @@ class ReportingAgent:
             "cagr": round(s.cagr * 100, 2), "max_drawdown": round(s.max_drawdown * 100, 2),
         } for symbol, s in benchmarks.items()]
 
+        sentiment_rows = [{
+            "symbol": symbol, "available": snap.available, "label": snap.label,
+            "score": round(snap.score, 2), "article_count": snap.article_count,
+            "top_headline": snap.top_headline, "note": snap.note,
+        } for symbol, snap in (sentiment_report or {}).items()]
+
         ledger_summary = self._ledger_summary(ledger, market)
         recommendation_rows = [{
             "trader": r.trader, "trigger": r.trigger, "action": r.action, "detail": r.detail,
@@ -169,6 +179,7 @@ class ReportingAgent:
             "allocation_rows": allocation_rows,
             "target_rows": target_rows,
             "benchmark_rows": benchmark_rows,
+            "sentiment_rows": sentiment_rows,
             "synthetic_symbols": [s for s, d in market.items() if d.is_synthetic],
             "equity_chart": self._equity_chart(by_key, benchmarks, risk_report, market),
             "drawdown_chart": self._drawdown_chart(by_key, risk_report),
@@ -256,6 +267,7 @@ class ReportingAgent:
     def build_standup_text(self, market: dict[str, MarketData],
                            compliance: dict[str, ComplianceReport],
                            risk_report: RiskReport, regime_report: RegimeReport,
+                           sentiment_report: dict | None = None,
                            ledger=None, recommendations: list | None = None) -> str:
         lines = []
 
@@ -285,6 +297,15 @@ class ReportingAgent:
         if regime_report.regimes:
             regimes = ", ".join(f"{s} {c.regime}" for s, c in regime_report.regimes.items())
             lines.append(f"\U0001F9ED Greg (Regime): {regimes} today.")
+
+        available = {s: snap for s, snap in (sentiment_report or {}).items() if snap.available}
+        if available:
+            reads = ", ".join(f"{s} {snap.label}" for s, snap in available.items())
+            lines.append(f"\U0001F4F0 Edwin (Sentiment): {reads} -- informational only, "
+                         "never gates a trade.")
+        elif sentiment_report:
+            lines.append("\U0001F4F0 Edwin (Sentiment): unavailable today "
+                         "(see full report) -- informational only, no impact on trading.")
 
         for rec in (recommendations or []):
             lines.append(f"\U0001FA91 Lifecycle ({rec.trigger}): {rec.trader} -- "

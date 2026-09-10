@@ -7,3 +7,6 @@ ccxt>=4.2             # crypto OHLCV (Binance public API)
 
 # Phase 3 dependencies
 Jinja2>=3.1           # daily HTML dashboard template
+
+# Phase 5: agents/sentiment_agent.py talks to Alpha Vantage over stdlib
+# urllib (same approach as utils/slack.py) -- no new dependency needed.

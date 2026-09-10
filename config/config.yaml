@@ -157,6 +157,35 @@ lifecycle:
   # fraction of the Sharpe its backtest promised.
   drift_sharpe_ratio_threshold: 0.5
 
+sentiment:
+  # Edwin (SentimentAgent). Purely informational (spec §9 / Phase 5) -- news
+  # sentiment is displayed on the dashboard and standup, but it never gates a
+  # strategy, never adjusts risk-parity weights, and never blocks a trade.
+  # That's Charles's and Greg's job; Edwin only reports.
+  enabled: true
+  provider: alpha_vantage
+  api_key_env: ALPHA_VANTAGE_API_KEY
+  # NEWS_SENTIMENT's own lookback window, in days.
+  lookback_days: 3
+  request_timeout_seconds: 10
+  cache_dir: data_cache
+  # Free-tier Alpha Vantage keys are rate-limited (25 requests/day); cache
+  # aggressively so a daily cron run costs at most one call per symbol.
+  cache_ttl_hours: 6
+  # Alpha Vantage's stock tickers work as-is; crypto pairs need its own
+  # CRYPTO:<SYMBOL> ticker format, unrelated to the exchange pair Wong fetches.
+  crypto_ticker_map:
+    BTC/USDT: CRYPTO:BTC
+
+live:
+  # Gate 2 of 3 (spec §13's three-gate refusal). Gate 1 is a real LiveBroker
+  # implementation (LiveBroker.IMPLEMENTED, still False -- Phase 5 ships the
+  # stub only) and gate 3 is the operator passing --i-understand-the-risk on
+  # the command line. All three must pass; none is bypassable, and this flag
+  # alone does nothing. Keep it false in any committed config -- flip it only
+  # in a local, untracked override once a real broker adapter exists.
+  enable_live_trading: false
+
 slack:
   # Everything ships through one incoming webhook. Left unset here on
   # purpose -- set the MERIDIAN_SLACK_WEBHOOK_URL environment variable

@@ -308,10 +308,18 @@ class PaperBroker:
 class LiveBroker:
     """Gated stub (spec §13). Ships as a stub that raises NotImplementedError
     -- implementing this against a real broker API is the operator's
-    responsibility, deliberately, per the three-gate live-trading design."""
+    responsibility, deliberately, per the three-gate live-trading design.
+
+    `IMPLEMENTED` is gate 1 of the three-gate refusal check `main.py run_live`
+    performs before anything else: even with `live.enable_live_trading: true`
+    in config and `--i-understand-the-risk` on the command line, live mode
+    refuses to run while this stays False. Flip it only alongside actually
+    wiring up a real broker adapter (e.g. Alpaca for equities, ccxt with real
+    exchange keys for crypto) -- never as a way to get past the gate."""
 
     name = "Cornelius"
     role = "Execution (Live)"
+    IMPLEMENTED = False
 
     def __init__(self, config: Config):
         self.config = config

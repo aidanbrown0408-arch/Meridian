@@ -1,13 +1,15 @@
-# Meridian Capital — Phase 4 (Execution & Lifecycle)
+# Meridian Capital — Phase 5 (Sentiment, Live Gate, Scheduling)
 
-Multi-agent trading research desk. This repo now implements **Phases 1–4** of the
+Multi-agent trading research desk. This repo now implements **Phases 1–5** of the
 build spec: a runnable research pipeline that fetches data, blocks anything with
 broken data, backtests all six traders against all three tickers with cost modeling,
 walk-forward validates the survivors, turns passing traders into a risk-parity
 capital allocation, classifies each ticker's regime and tilts capital accordingly,
-renders the whole thing as a navy/gold HTML dashboard plus a Slack standup post, and
-— in paper mode — actually trades that allocation against a persisted $5,000 virtual
-ledger, with a killswitch and an operator-gated benching lifecycle on top.
+reads informational news sentiment on the side, renders the whole thing as a
+navy/gold HTML dashboard plus a Slack standup post, and — in paper mode — actually
+trades that allocation against a persisted $5,000 virtual ledger, with a killswitch
+and an operator-gated benching lifecycle on top. `live` mode exists in the CLI and
+always refuses, behind a three-gate check that is not bypassable.
 
 Not financial advice. Backtests overfit. Markets change.
 
@@ -29,10 +31,14 @@ Not financial advice. Backtests overfit. Markets change.
 | Killswitch — flatten every open paper position + halt, manual `clear-halt` to resume | Done |
 | Lifecycle agent — validation-fail / live-drift benching recommendations, operator-only apply | Done |
 | `research` and `paper` CLI modes with console report | Done |
-| Live gate (three-gate refusal) | Phase 5 |
+| Edwin (SentimentAgent) — Alpha Vantage `NEWS_SENTIMENT`, informational only | Done |
+| Live gate — three-gate refusal check (`main.py run_live`) | Done (still refuses) |
+| Cron / Task Scheduler setup docs (`docs/scheduling.md`) | Done |
 
-`live` is wired into the CLI but refuses to run and tells you which phase it arrives
-in. Its three gates are not bypassable and are not implemented yet either way.
+`live` is wired into the CLI and evaluates all three gates every time it's invoked,
+but always refuses: the implementation gate (`LiveBroker.IMPLEMENTED`) stays `False`
+until a real broker adapter exists, so no combination of config and CLI flags can
+start a real trade. See "Live-trading gate" below.
 
 ## Setup
 
@@ -56,7 +62,12 @@ still succeeds. The HTML dashboard always writes to `reports/meridian_YYYYMMDD.h
 and `reports/latest.html`; the paper ledger persists to `reports/paper_ledger.json` and
 the bench state to `reports/bench_state.json` (all gitignored).
 
-Tests: `python tests/test_phase1.py && python tests/test_phase2.py && python tests/test_phase3.py && python tests/test_phase4.py`
+To get a real Edwin (SentimentAgent) read instead of "unavailable", set
+`ALPHA_VANTAGE_API_KEY` in the environment — without it, every symbol reports
+`available=False` with a note explaining why, and the run still succeeds. See
+"Sentiment" below.
+
+Tests: `python tests/test_phase1.py && python tests/test_phase2.py && python tests/test_phase3.py && python tests/test_phase4.py && python tests/test_phase5.py`
 (or `python -m pytest tests -q`).
 
 ## Layout
@@ -70,8 +81,9 @@ agents/backtest_agent.py      Leo — runs all strategy/ticker combinations
 agents/risk_agent.py          Charles — walk-forward gate, risk parity, netting
 agents/regime_agent.py        Greg — ADX/slope/vol classifier, mismatch capital cut
 agents/reporting_agent.py     George — HTML dashboard + Slack standup
-agents/portfolio_agent.py     Cornelius — ResearchExecutor + PaperBroker + killswitch
+agents/portfolio_agent.py     Cornelius — ResearchExecutor + PaperBroker + LiveBroker stub
 agents/lifecycle_agent.py     Charles+George — benching recommendations, operator gate
+agents/sentiment_agent.py     Edwin — Alpha Vantage NEWS_SENTIMENT, informational only
 strategies/base.py            Abstract base, registry, next-bar enforcement
 strategies/{orbit,flux,revert,surge,spark,anchor}.py
 backtester/engine.py          Vectorized engine + CostModel
@@ -82,6 +94,8 @@ tests/test_phase1.py          Phase 1 invariant tests
 tests/test_phase2.py          Phase 2 invariant tests
 tests/test_phase3.py          Phase 3 invariant tests
 tests/test_phase4.py          Phase 4 invariant tests
+tests/test_phase5.py          Phase 5 invariant tests
+docs/scheduling.md            cron (Linux/macOS) and Task Scheduler (Windows) setup
 ```
 
 ## Design decisions worth knowing
@@ -247,9 +261,38 @@ In a sandboxed environment with no outbound access to Yahoo or Binance, all thre
 symbols fall back to synthetic data and the report flags them. That path is working as
 intended — it is not a data bug.
 
-## Next: Phase 5
+**Edwin never has veto power, structurally, not just by convention.** `SentimentAgent.
+run()` is called last in `_run_pipeline`, after Charles and Greg have already produced
+`risk_report`/`regime_report`, and its output is never passed back into either of
+them — only forward into George's report and standup. There's no code path Edwin's
+score could reach that would change a weight or a bench decision even by accident.
 
-`agents/sentiment_agent.py` (Edwin: Alpha Vantage `NEWS_SENTIMENT`, informational only
-— never vetoes a strategy), the `LiveBroker` stub with the three-gate refusal logic
-(implementation gate, `enable_live_trading: true`, `--i-understand-the-risk`), and
-cron/Task Scheduler setup docs for daily runs.
+**Sentiment degrades exactly like Slack does, and for the same reason.** No API key,
+a network failure, a malformed response, or Alpha Vantage's own rate-limit message —
+all of them come back as `SentimentSnapshot(available=False, note=...)` rather than
+raising, mirroring `utils/slack.py`'s "never take down the pipeline over an
+informational feature" rule (`test_missing_api_key_returns_unavailable_not_an_exception`,
+`test_fetch_failure_never_raises_and_reports_unavailable`).
+
+**The three live-trading gates are independent and none is satisfiable by the other
+two.** `main.py run_live` checks, in order: (1) `LiveBroker.IMPLEMENTED` — a class
+attribute, `False` until someone actually wires up a real broker adapter and flips
+it alongside that work, never as a standalone change; (2) `live.enable_live_trading:
+true` in config; (3) `--i-understand-the-risk` on the command line. All three must
+pass. Gate 1 can't be satisfied by config or CLI flags at all, which is the point —
+`test_live_still_refuses_with_config_and_operator_gate_both_satisfied` locks in that
+even with gates 2 and 3 wide open, live mode still refuses.
+
+**Edwin's cache uses the same shape as Wong's, deliberately.** `data_cache/` already
+exists for Wong's OHLCV cache; Edwin writes `sentiment_<ticker>.json` alongside it
+with its own TTL (`sentiment.cache_ttl_hours`, default 6h) so a daily cron run costs
+at most one Alpha Vantage call per symbol — the free tier is rate-limited to 25
+requests/day, and this system fetches at most 3.
+
+## Next: Phase 6
+
+Live-trading gate 1 (a real broker adapter — e.g. Alpaca for equities, ccxt with real
+exchange keys for crypto) is the natural next step, once there's an operator ready to
+fund a real account and accept that this system's own README says "backtests
+overfit." Until then, `python main.py live` remains a correctly-refusing dead end by
+design.

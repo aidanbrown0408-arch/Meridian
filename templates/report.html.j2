@@ -300,6 +300,35 @@
   </section>
 
   <section>
+    <h2>News Sentiment (Edwin)</h2>
+    <p class="note">Informational only — Edwin never gates a strategy, adjusts a weight, or
+      blocks a trade. That's Charles's and David's job.</p>
+    {% if sentiment_rows %}
+    <table>
+      <tr><th>Symbol</th><th>Read</th><th class="num">Score</th><th class="num">Articles</th><th>Headline / note</th></tr>
+      {% for row in sentiment_rows %}
+      <tr>
+        <td>{{ row.symbol }}</td>
+        {% if row.available %}
+        <td><span class="pill {{ 'trending' if 'bullish' in row.label else ('choppy' if row.label == 'neutral' else 'blocked') }}">{{ row.label }}</span></td>
+        <td class="num {{ 'pos' if row.score >= 0 else 'neg' }}">{{ "%+.2f"|format(row.score) }}</td>
+        <td class="num">{{ row.article_count }}</td>
+        <td>{{ row.top_headline or row.note }}</td>
+        {% else %}
+        <td><span class="pill undecided">unavailable</span></td>
+        <td class="num">—</td>
+        <td class="num">—</td>
+        <td>{{ row.note }}</td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">No symbols to read.</p>
+    {% endif %}
+  </section>
+
+  <section>
     <h2>Walk-Forward Validation (Charles)</h2>
     <table>
       <tr><th>Strategy</th><th>Symbol</th><th class="num">Folds</th><th class="num">Sharpe</th>
