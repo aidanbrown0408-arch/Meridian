@@ -135,6 +135,28 @@ strategies:
     enabled: true
     params: {window: 20, num_std: 2.0}
 
+execution:
+  # Cornelius. Paper ledger is persisted JSON so the account survives
+  # between daily runs -- this is what builds the forward-tested track
+  # record the spec's live-trading gate cares about.
+  paper_ledger_path: reports/paper_ledger.json
+  # Skip a rebalance smaller than this -- avoids churning on rounding-sized
+  # deltas between today's target weight and yesterday's.
+  min_trade_dollars: 25.0
+
+lifecycle:
+  # Charles/George's benching triggers (spec §10) and the operator-approval
+  # gate around them.
+  bench_state_path: reports/bench_state.json
+  # "fails walk-forward on N consecutive daily runs."
+  validation_fail_consecutive_days: 3
+  # Live-drift needs a real shadow track record before it means anything.
+  drift_min_track_days: 10
+  drift_lookback_days: 20
+  # Flag live-drift when the trailing shadow Sharpe falls below this
+  # fraction of the Sharpe its backtest promised.
+  drift_sharpe_ratio_threshold: 0.5
+
 slack:
   # Everything ships through one incoming webhook. Left unset here on
   # purpose -- set the MERIDIAN_SLACK_WEBHOOK_URL environment variable

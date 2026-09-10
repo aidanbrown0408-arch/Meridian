@@ -68,16 +68,18 @@ class ReportingAgent:
     def run(self, market: dict[str, MarketData], compliance: dict[str, ComplianceReport],
             results: list[BacktestResult], benchmarks: dict[str, PerformanceSummary],
             risk_report: RiskReport, regime_report: RegimeReport,
+            ledger=None, recommendations: list | None = None,
             write_file: bool = True, post_slack: bool = True) -> DashboardResult:
         context = self._build_context(market, compliance, results, benchmarks,
-                                       risk_report, regime_report)
+                                       risk_report, regime_report, ledger, recommendations)
         html = self.env.get_template("report.html.j2").render(**context)
 
         html_path = None
         if write_file:
             html_path = self._write_html(html)
 
-        standup_text = self.build_standup_text(market, compliance, risk_report, regime_report)
+        standup_text = self.build_standup_text(market, compliance, risk_report, regime_report,
+                                                ledger, recommendations)
         posted = False
         if post_slack and self.post_enabled:
             if self._is_standup_day():
@@ -104,7 +106,8 @@ class ReportingAgent:
     # ------------------------------------------------------------------ HTML context
 
     def _build_context(self, market, compliance, results, benchmarks,
-                       risk_report: RiskReport, regime_report: RegimeReport) -> dict:
+                       risk_report: RiskReport, regime_report: RegimeReport,
+                       ledger=None, recommendations: list | None = None) -> dict:
         by_key = {(r.strategy, r.symbol): r for r in results}
 
         data_rows = [{
@@ -148,6 +151,11 @@ class ReportingAgent:
             "cagr": round(s.cagr * 100, 2), "max_drawdown": round(s.max_drawdown * 100, 2),
         } for symbol, s in benchmarks.items()]
 
+        ledger_summary = self._ledger_summary(ledger, market)
+        recommendation_rows = [{
+            "trader": r.trader, "trigger": r.trigger, "action": r.action, "detail": r.detail,
+        } for r in (recommendations or [])]
+
         return {
             "generated_at": datetime.now().strftime("%A, %B %d %Y — %H:%M"),
             "starting_capital": risk_report.starting_capital,
@@ -165,6 +173,35 @@ class ReportingAgent:
             "equity_chart": self._equity_chart(by_key, benchmarks, risk_report, market),
             "drawdown_chart": self._drawdown_chart(by_key, risk_report),
             "trader_bar_chart": self._trader_bar_chart(risk_report),
+            "ledger": ledger_summary,
+            "recommendation_rows": recommendation_rows,
+        }
+
+    def _ledger_summary(self, ledger, market: dict[str, MarketData]) -> dict | None:
+        """Real paper P&L, once Cornelius has actually traded -- None in
+        research mode, where there is nothing to show but a target."""
+        if ledger is None:
+            return None
+        prices = {s: float(d.bars["close"].iloc[-1]) for s, d in market.items() if not d.bars.empty}
+        equity = ledger.mark_to_market(prices)
+        position_rows = [{
+            "symbol": symbol, "shares": round(pos.shares, 4),
+            "entry_price": round(pos.entry_price, 2),
+            "price": round(prices.get(symbol, pos.entry_price), 2),
+            "days_held": pos.days_held(),
+            "market_value": round(pos.market_value(prices.get(symbol, pos.entry_price)), 2),
+            "unrealized_pnl": round(pos.unrealized_pnl(prices.get(symbol, pos.entry_price)), 2),
+        } for symbol, pos in ledger.positions.items()]
+        total_pnl = equity - ledger.starting_capital
+        return {
+            "cash": round(ledger.cash, 2), "equity": round(equity, 2),
+            "starting_capital": ledger.starting_capital,
+            "total_pnl": round(total_pnl, 2),
+            "total_pnl_pct": round((total_pnl / ledger.starting_capital) * 100, 2)
+                            if ledger.starting_capital else 0.0,
+            "positions": position_rows,
+            "halted": ledger.halted, "halt_reason": ledger.halt_reason,
+            "trade_count": len(ledger.trades),
         }
 
     # ------------------------------------------------------------------ charts
@@ -218,7 +255,8 @@ class ReportingAgent:
 
     def build_standup_text(self, market: dict[str, MarketData],
                            compliance: dict[str, ComplianceReport],
-                           risk_report: RiskReport, regime_report: RegimeReport) -> str:
+                           risk_report: RiskReport, regime_report: RegimeReport,
+                           ledger=None, recommendations: list | None = None) -> str:
         lines = []
 
         synthetic = [s for s, d in market.items() if d.is_synthetic]
@@ -248,7 +286,22 @@ class ReportingAgent:
             regimes = ", ".join(f"{s} {c.regime}" for s, c in regime_report.regimes.items())
             lines.append(f"\U0001F9ED Greg (Regime): {regimes} today.")
 
-        if risk_report.live_traders:
+        for rec in (recommendations or []):
+            lines.append(f"\U0001FA91 Lifecycle ({rec.trigger}): {rec.trader} -- "
+                         f"{rec.action.upper()}. {rec.detail} Operator approval required "
+                         "before anything actually changes.")
+
+        if ledger is not None:
+            prices = {s: float(d.bars["close"].iloc[-1]) for s, d in market.items()
+                      if not d.bars.empty}
+            equity = ledger.mark_to_market(prices)
+            pnl_pct = ((equity - ledger.starting_capital) / ledger.starting_capital
+                      if ledger.starting_capital else 0.0)
+            halt = "  ⛔ HALTED" if ledger.halted else ""
+            lines.append(f"\U0001F4CA George (Reporting): Paper equity ${equity:,.0f} "
+                         f"({pnl_pct:+.1%} since inception), {len(ledger.positions)} open "
+                         f"position(s).{halt} Full report attached.")
+        elif risk_report.live_traders:
             lines.append("\U0001F4CA George (Reporting): Target allocation ready -- no live "
                          "P&L yet (paper trading begins Phase 4). Full report attached.")
         else:

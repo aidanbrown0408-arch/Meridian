@@ -129,6 +129,18 @@
   <section>
     <h2>Key Metrics</h2>
     <div class="metrics-row">
+      {% if ledger %}
+      <div class="metric">
+        <div class="label">Paper Portfolio Value</div>
+        <div class="value">${{ "{:,.0f}".format(ledger.equity) }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">P&amp;L Since Inception</div>
+        <div class="value {{ 'pos' if ledger.total_pnl >= 0 else 'neg' }}">
+          {{ "%+.1f"|format(ledger.total_pnl_pct) }}%
+        </div>
+      </div>
+      {% else %}
       <div class="metric">
         <div class="label">Starting Paper Capital</div>
         <div class="value">${{ "{:,.0f}".format(starting_capital) }}</div>
@@ -137,6 +149,7 @@
         <div class="label">Live Traders</div>
         <div class="value">{{ live_traders|length }} / {{ (live_traders|length) + (benched_traders|length) }}</div>
       </div>
+      {% endif %}
       <div class="metric">
         <div class="label">vs. SPY Buy-and-Hold</div>
         {% set spy = benchmark_rows|selectattr("symbol", "equalto", "SPY")|list %}
@@ -145,8 +158,15 @@
         </div>
       </div>
     </div>
-    <p class="note">No live P&amp;L yet — paper trading begins Phase 4. Metrics above describe
-      today's research run, not a funded account.</p>
+    {% if ledger %}
+    <p class="note">Live paper P&amp;L from the persisted ledger
+      ({{ ledger.trade_count }} trade(s) since inception).
+      {% if ledger.halted %}⛔ HALTED: {{ ledger.halt_reason }} — clear with
+      <code>python main.py clear-halt</code> before this account trades again.{% endif %}</p>
+    {% else %}
+    <p class="note">No live P&amp;L yet — paper trading begins with <code>python main.py paper</code>.
+      Metrics above describe today's research run, not a funded account.</p>
+    {% endif %}
   </section>
 
   {% if synthetic_symbols %}
@@ -154,6 +174,53 @@
     <div class="warning">⚠ {{ synthetic_symbols|join(', ') }} used synthetic data today. Every
       number touching {{ synthetic_symbols|join(', ') }} describes a random walk, not a market —
       do not act on it.</div>
+  </section>
+  {% endif %}
+
+  {% if recommendation_rows %}
+  <section>
+    <h2>Lifecycle — Important Inquiry (Charles + George)</h2>
+    <table>
+      <tr><th>Trader</th><th>Trigger</th><th>Recommendation</th><th>Detail</th></tr>
+      {% for row in recommendation_rows %}
+      <tr>
+        <td>{{ row.trader }}</td>
+        <td>{{ row.trigger.replace('_', ' ') }}</td>
+        <td><span class="pill blocked">{{ row.action }}</span></td>
+        <td>{{ row.detail }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    <p class="note">Recommendation only — nothing is benched without the operator's explicit
+      approval (<code>python main.py bench --trader X --trigger ...</code>).</p>
+  </section>
+  {% endif %}
+
+  {% if ledger %}
+  <section>
+    <h2>Paper Ledger (Cornelius)</h2>
+    {% if ledger.positions %}
+    <table>
+      <tr><th>Ticker</th><th class="num">Shares</th><th class="num">Entry</th>
+          <th class="num">Price</th><th class="num">Days Held</th>
+          <th class="num">Market Value</th><th class="num">Unrealized P&amp;L</th></tr>
+      {% for row in ledger.positions %}
+      <tr>
+        <td>{{ row.symbol }}</td>
+        <td class="num">{{ row.shares }}</td>
+        <td class="num">${{ row.entry_price }}</td>
+        <td class="num">${{ row.price }}</td>
+        <td class="num">{{ row.days_held }}</td>
+        <td class="num">${{ "{:,.0f}".format(row.market_value) }}</td>
+        <td class="num {{ 'pos' if row.unrealized_pnl >= 0 else 'neg' }}">
+          {{ "{:+,.0f}".format(row.unrealized_pnl) }}
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">No open positions. Cash: ${{ "{:,.0f}".format(ledger.cash) }}</p>
+    {% endif %}
   </section>
   {% endif %}
 
