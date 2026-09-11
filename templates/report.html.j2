@@ -2,407 +2,481 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Meridian Capital — Daily Dashboard</title>
 <style>
-  :root {
-    --navy: #0F1C33;
-    --gold: #D4AF6A;
-    --parchment: #E8E3D3;
-    --gain: #7FBF7F;
-    --loss: #C97A7A;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--navy);
-    color: var(--parchment);
-    font-family: Georgia, 'Times New Roman', serif;
-    padding: 32px 24px 64px;
-  }
-  h1, h2, .wordmark {
-    font-family: 'Playfair Display', Georgia, serif;
-  }
-  .wrap { max-width: 920px; margin: 0 auto; }
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#0f1c33;--navy2:#152847;--navy3:#1a3055;--gold:#d4af6a;--gold2:#e8c87a;
+  --parch:#e8e3d3;--muted:#a8a190;--green:#7fbf7f;--red:#c97a7a;--border:#d4af6a22;
+}
+body{background:var(--navy);color:var(--parch);font-family:Georgia,'Times New Roman',serif}
+h1,h2,h3,.wordmark{font-family:'Playfair Display',Georgia,serif}
+.wrap{max-width:960px;margin:0 auto}
 
-  header.masthead {
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    border-bottom: 1px solid var(--gold);
-    padding-bottom: 18px;
-    margin-bottom: 28px;
-  }
-  header.masthead .titles { flex: 1; }
-  .wordmark {
-    font-size: 28px;
-    letter-spacing: 4px;
-    margin: 0;
-    color: var(--parchment);
-  }
-  .tagline { margin: 4px 0 0; color: var(--gold); font-size: 13px; letter-spacing: 1px; }
-  .generated { margin: 2px 0 0; font-size: 12px; color: #9aa5bd; }
+.hdr{background:var(--navy);border-bottom:1px solid var(--border);padding:22px 20px 0;text-align:center}
+.hdr-top{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.hdr-wordmark{font-size:19px;letter-spacing:3px;color:var(--parch);font-weight:600}
+.hdr-date{font-size:11px;color:var(--muted);letter-spacing:1px}
+.tabs{display:flex;justify-content:center;flex-wrap:wrap}
+.tab{padding:12px 18px;font-size:11px;letter-spacing:1.5px;color:var(--muted);cursor:pointer;
+     border-bottom:2px solid transparent;transition:all .2s;background:none;border-left:none;
+     border-right:none;border-top:none;font-family:Georgia,serif;white-space:nowrap}
+.tab:hover{color:var(--parch)}
+.tab.active{color:var(--gold);border-bottom-color:var(--gold)}
 
-  section { margin-bottom: 34px; }
-  h2 {
-    font-size: 15px;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    color: var(--gold);
-    border-bottom: 1px solid #2A3B5C;
-    padding-bottom: 8px;
-    margin-bottom: 14px;
-  }
+.page{display:none;padding:20px}
+.page.active{display:block}
 
-  .metrics-row { display: flex; gap: 16px; flex-wrap: wrap; }
-  .metric {
-    flex: 1 1 180px;
-    background: #142544;
-    border: 1px solid #2A3B5C;
-    border-radius: 6px;
-    padding: 14px 16px;
-  }
-  .metric .label { font-size: 11px; letter-spacing: 1px; color: var(--gold); text-transform: uppercase; }
-  .metric .value { font-size: 22px; margin-top: 6px; }
+.mrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:20px}
+.mc{background:var(--navy2);border:0.5px solid var(--border);border-radius:10px;padding:14px}
+.mc-lbl{font-size:9px;letter-spacing:1px;color:var(--muted);margin-bottom:6px}
+.mc-val{font-size:19px;font-weight:600}
+.up{color:var(--green)}
+.dn{color:var(--red)}
+.gld{color:var(--gold)}
+.mc-sub{font-size:10px;color:var(--muted);margin-top:3px}
 
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #24365a; }
-  th { color: var(--gold); font-weight: normal; letter-spacing: 0.5px; font-size: 11px; text-transform: uppercase; }
-  tr:last-child td { border-bottom: none; }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .pos { color: var(--gain); }
-  .neg { color: var(--loss); }
-  .pill {
-    display: inline-block;
-    padding: 1px 8px;
-    border-radius: 10px;
-    font-size: 11px;
-  }
-  .pill.blocked { background: rgba(201,122,122,0.25); color: var(--loss); }
-  .pill.trending { background: rgba(127,191,127,0.2); color: var(--gain); }
-  .pill.choppy { background: rgba(212,175,106,0.2); color: var(--gold); }
-  .pill.undecided { background: rgba(154,165,189,0.2); color: #9aa5bd; }
-  .pill.live { background: rgba(127,191,127,0.2); color: var(--gain); }
-  .pill.benched { background: rgba(154,165,189,0.2); color: #9aa5bd; }
+.shdr{font-size:10px;letter-spacing:1.5px;color:var(--gold);margin-bottom:10px;padding-bottom:6px;
+      border-bottom:0.5px solid var(--border);text-transform:uppercase}
+.ccard{background:var(--navy2);border:0.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+.ctitle{font-size:9px;letter-spacing:1.5px;color:var(--muted);margin-bottom:10px;text-transform:uppercase}
 
-  .note { font-size: 12px; color: #9aa5bd; margin-top: 8px; }
-  .warning {
-    border-left: 3px solid var(--gold);
-    background: #142544;
-    padding: 10px 14px;
-    font-size: 13px;
-    color: var(--gold);
-  }
-  .empty { color: #9aa5bd; font-style: italic; font-size: 13px; }
-  svg { width: 100%; height: auto; border-radius: 6px; border: 1px solid #2A3B5C; }
-  .chart-grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
-  footer { text-align: center; font-size: 11px; color: #5f6c8a; margin-top: 40px; }
+.stbl{width:100%;border-collapse:collapse;margin-bottom:20px;font-size:12px}
+.stbl th{font-size:9px;letter-spacing:1px;color:var(--muted);padding:8px;text-align:left;
+         border-bottom:0.5px solid var(--border);text-transform:uppercase}
+.stbl td{padding:9px 8px;border-bottom:0.5px solid var(--border)}
+.stbl tr:last-child td{border-bottom:none}
+.stbl tr.clickable:hover td{background:var(--navy3);cursor:pointer}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.bdg{display:inline-block;padding:2px 8px;border-radius:10px;font-size:9px;letter-spacing:.5px}
+.bdg.live{background:rgba(127,191,127,.15);color:var(--green)}
+.bdg.watch{background:rgba(212,175,106,.15);color:var(--gold)}
+.bdg.bench{background:rgba(201,122,122,.15);color:var(--red)}
+.bdg.flat{background:rgba(168,161,144,.15);color:var(--muted)}
+.bdg.trending{background:rgba(127,191,127,.15);color:var(--green)}
+.bdg.choppy{background:rgba(212,175,106,.15);color:var(--gold)}
+.bdg.undecided{background:rgba(168,161,144,.15);color:var(--muted)}
+
+.note{font-size:12px;color:var(--muted);margin-top:8px}
+.warning{border-left:3px solid var(--gold);background:var(--navy2);padding:12px 14px;
+         font-size:13px;color:var(--gold);border-radius:0 8px 8px 0;margin-bottom:18px}
+.empty{color:var(--muted);font-style:italic;font-size:13px}
+.ccard svg{width:100%;height:auto;display:block;border-radius:6px}
+
+/* agent grid */
+.agrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.acard{background:var(--navy2);border:0.5px solid var(--border);border-radius:10px;padding:14px}
+.aname{font-size:10px;letter-spacing:1px;color:var(--gold);margin-bottom:7px;text-transform:uppercase}
+.amsg{font-size:12px;color:var(--parch);line-height:1.65}
+.astatus{display:flex;align-items:center;gap:5px;margin-top:9px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
+.dot.w{background:var(--gold)}
+.astat-txt{font-size:10px;color:var(--muted)}
+
+/* trade cards */
+.tcard{background:var(--navy2);border:0.5px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+.thdr{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+.tticker{font-size:16px;font-weight:600}
+.tstrat{font-size:10px;color:var(--muted);margin-top:3px}
+.plrow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px}
+.plbox{background:var(--navy);border:0.5px solid var(--border);border-radius:8px;padding:10px 12px}
+.plbox-lbl{font-size:9px;letter-spacing:1px;color:var(--muted);margin-bottom:4px;text-transform:uppercase}
+.plbox-val{font-size:15px;font-weight:600}
+.plbox-sub{font-size:10px;color:var(--muted);margin-top:2px}
+.tmeta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;font-size:11px}
+.tmeta-lbl{font-size:9px;color:var(--muted);letter-spacing:.5px;display:block;margin-bottom:2px;text-transform:uppercase}
+
+/* modal */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);display:none;align-items:flex-start;
+         justify-content:center;z-index:200;padding:30px 16px;overflow-y:auto}
+.overlay.open{display:flex}
+.modal{background:var(--navy);border:0.5px solid var(--gold);border-radius:12px;width:100%;max-width:480px}
+.mhdr{padding:18px 20px;border-bottom:0.5px solid var(--border);display:flex;align-items:flex-start;
+      justify-content:space-between;position:sticky;top:0;background:var(--navy);border-radius:12px 12px 0 0}
+.mtitle{font-size:17px;color:var(--gold);letter-spacing:1px}
+.msub{font-size:11px;color:var(--muted);margin-top:2px}
+.mbtn{background:none;border:0.5px solid var(--border);color:var(--muted);border-radius:5px;
+      padding:3px 10px;cursor:pointer;font-size:16px;line-height:1.4;font-family:Georgia,serif}
+.mbtn:hover{color:var(--parch)}
+.mbody{padding:18px 20px}
+.msec{margin-bottom:18px}
+.msec-title{font-size:9px;letter-spacing:1.5px;color:var(--gold);margin-bottom:9px;padding-bottom:5px;
+            border-bottom:0.5px solid var(--border);text-transform:uppercase}
+.kv{display:flex;justify-content:space-between;padding:6px 0;border-bottom:0.5px solid var(--border);font-size:12px}
+.kv:last-child{border-bottom:none}
+.kk{color:var(--muted)}
+.kv-up{color:var(--green)}
+.kv-dn{color:var(--red)}
+.kv-gld{color:var(--gold)}
+
+footer{text-align:center;font-size:11px;color:#5f6c8a;margin:24px 0 40px}
+
+@media(max-width:560px){
+  .agrid{grid-template-columns:1fr}
+  .tab{padding:10px 10px;font-size:10px}
+  .plrow{grid-template-columns:1fr 1fr}
+  .tmeta{grid-template-columns:1fr 1fr}
+}
 </style>
 </head>
 <body>
 <div class="wrap">
 
-  <header class="masthead">
-    <svg viewBox="0 0 60 60" width="60" height="60" aria-label="Meridian Capital compass rose">
-      <circle cx="30" cy="30" r="26" fill="none" stroke="#D4AF6A" stroke-width="1.5"/>
-      <circle cx="30" cy="30" r="18" fill="none" stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="30" y1="6"  x2="30" y2="54" stroke="#D4AF6A" stroke-width="0.75"/>
-      <line x1="6"  y1="30" x2="54" y2="30" stroke="#D4AF6A" stroke-width="0.75"/>
-      <line x1="48.38" y1="11.62" x2="51.21" y2="8.79"  stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="48.38" y1="48.38" x2="51.21" y2="51.21" stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="11.62" y1="48.38" x2="8.79"  y2="51.21" stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="11.62" y1="11.62" x2="8.79"  y2="8.79"  stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="30" y1="4"  x2="30" y2="0"  stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="30" y1="56" x2="30" y2="60" stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="56" y1="30" x2="60" y2="30" stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="4"  y1="30" x2="0"  y2="30" stroke="#D4AF6A" stroke-width="1"/>
-      <polygon points="30,10 27,30 33,30" fill="#D4AF6A"/>
-      <polygon points="30,50 27,30 33,30" fill="none" stroke="#D4AF6A" stroke-width="1"/>
-      <circle cx="30" cy="30" r="2" fill="#D4AF6A"/>
+<header class="hdr">
+  <div class="hdr-top">
+    <svg width="30" height="30" viewBox="0 0 88 88" aria-label="Meridian Capital compass rose">
+      <circle cx="44" cy="44" r="38" fill="none" stroke="#d4af6a" stroke-width="1.5"/>
+      <circle cx="44" cy="44" r="31" fill="none" stroke="#d4af6a" stroke-width="0.5" opacity="0.5"/>
+      <line x1="44" y1="6" x2="44" y2="82" stroke="#d4af6a" stroke-width="0.6" opacity="0.5"/>
+      <line x1="6" y1="44" x2="82" y2="44" stroke="#d4af6a" stroke-width="0.6" opacity="0.5"/>
+      <g stroke="#d4af6a" stroke-width="1.2" opacity="0.7"><line x1="44" y1="6" x2="44" y2="13"/><line x1="44" y1="75" x2="44" y2="82"/><line x1="6" y1="44" x2="13" y2="44"/><line x1="75" y1="44" x2="82" y2="44"/></g>
+      <path d="M44 14 L52 44 L44 73 L36 44 Z" fill="none" stroke="#d4af6a" stroke-width="1"/>
+      <path d="M44 14 L52 44 L44 44 Z" fill="#d4af6a"/>
+      <path d="M44 73 L36 44 L44 44 Z" fill="none" stroke="#d4af6a" stroke-width="1"/>
+      <circle cx="44" cy="44" r="3" fill="#0f1c33" stroke="#d4af6a" stroke-width="1"/>
     </svg>
-    <div class="titles">
-      <p class="wordmark">MERIDIAN CAPITAL</p>
-      <p class="tagline">multi-agent trading research desk</p>
-      <p class="generated">{{ generated_at }}</p>
-    </div>
-  </header>
+    <span class="hdr-wordmark">MERIDIAN CAPITAL</span>
+    <span class="hdr-date">{{ generated_short }}</span>
+  </div>
+  <nav class="tabs">
+    <button class="tab active" onclick="go('overview',this)">OVERVIEW</button>
+    <button class="tab" onclick="go('strategies',this)">STRATEGIES</button>
+    <button class="tab" onclick="go('trades',this)">TRADES</button>
+    <button class="tab" onclick="go('agents',this)">AGENTS</button>
+    <button class="tab" onclick="go('detail',this)">DETAIL</button>
+  </nav>
+</header>
 
-  <section>
-    <h2>Key Metrics</h2>
-    <div class="metrics-row">
-      {% if ledger %}
-      <div class="metric">
-        <div class="label">Paper Portfolio Value</div>
-        <div class="value">${{ "{:,.0f}".format(ledger.equity) }}</div>
-      </div>
-      <div class="metric">
-        <div class="label">P&amp;L Since Inception</div>
-        <div class="value {{ 'pos' if ledger.total_pnl >= 0 else 'neg' }}">
-          {{ "%+.1f"|format(ledger.total_pnl_pct) }}%
-        </div>
-      </div>
-      {% else %}
-      <div class="metric">
-        <div class="label">Starting Paper Capital</div>
-        <div class="value">${{ "{:,.0f}".format(starting_capital) }}</div>
-      </div>
-      <div class="metric">
-        <div class="label">Live Traders</div>
-        <div class="value">{{ live_traders|length }} / {{ (live_traders|length) + (benched_traders|length) }}</div>
-      </div>
-      {% endif %}
-      <div class="metric">
-        <div class="label">vs. SPY Buy-and-Hold</div>
-        {% set spy = benchmark_rows|selectattr("symbol", "equalto", "SPY")|list %}
-        <div class="value {{ 'pos' if spy and spy[0].cagr >= 0 else 'neg' }}">
-          {{ "%.2f"|format(spy[0].cagr) if spy else "n/a" }}%
-        </div>
-      </div>
-    </div>
-    {% if ledger %}
-    <p class="note">Live paper P&amp;L from the persisted ledger
-      ({{ ledger.trade_count }} trade(s) since inception).
-      {% if ledger.halted %}⛔ HALTED: {{ ledger.halt_reason }} — clear with
-      <code>python main.py clear-halt</code> before this account trades again.{% endif %}</p>
+<!-- OVERVIEW -->
+<div id="p-overview" class="page active">
+  <div class="mrow">
+    {% if overview.has_ledger %}
+    <div class="mc"><div class="mc-lbl">PORTFOLIO</div>
+      <div class="mc-val">${{ "{:,.0f}".format(overview.portfolio_value) }}</div>
+      <div class="mc-sub {{ 'up' if overview.total_pnl_pct >= 0 else 'dn' }}">{{ "%+.1f"|format(overview.total_pnl_pct) }}% all-time</div></div>
+    <div class="mc"><div class="mc-lbl">TODAY P/L</div>
+      <div class="mc-val {{ 'up' if overview.today_pnl >= 0 else 'dn' }}">{{ "{:+,.0f}".format(overview.today_pnl) }}</div>
+      <div class="mc-sub">{{ "%+.2f"|format(overview.today_pnl_pct) }}%</div></div>
     {% else %}
-    <p class="note">No live P&amp;L yet — paper trading begins with <code>python main.py paper</code>.
-      Metrics above describe today's research run, not a funded account.</p>
+    <div class="mc"><div class="mc-lbl">STARTING PAPER CAPITAL</div>
+      <div class="mc-val">${{ "{:,.0f}".format(overview.portfolio_value) }}</div>
+      <div class="mc-sub">no live P&amp;L in research mode</div></div>
     {% endif %}
-  </section>
+    <div class="mc"><div class="mc-lbl">VS SPY (CAGR)</div>
+      <div class="mc-val {{ 'up' if overview.vs_spy is not none and overview.vs_spy >= 0 else 'dn' }}">{{ ("%.1f"|format(overview.vs_spy)) + '%' if overview.vs_spy is not none else "n/a" }}</div>
+      <div class="mc-sub">buy-and-hold benchmark</div></div>
+    <div class="mc"><div class="mc-lbl">MAX DD</div>
+      <div class="mc-val">{{ "%.1f"|format(overview.max_drawdown_pct) }}%</div>
+      <div class="mc-sub">limit {{ "%.0f"|format(overview.max_drawdown_limit_pct) }}%</div></div>
+    <div class="mc"><div class="mc-lbl">TRADERS</div>
+      <div class="mc-val">{{ overview.live_traders }}/{{ overview.total_traders }}</div>
+      <div class="mc-sub">live</div></div>
+    <div class="mc"><div class="mc-lbl">REGIME</div>
+      <div class="mc-val gld">{{ overview.regime_headline|upper }}</div>
+      <div class="mc-sub">{{ universe|join(', ') }}</div></div>
+  </div>
 
   {% if synthetic_symbols %}
-  <section>
-    <div class="warning">⚠ {{ synthetic_symbols|join(', ') }} used synthetic data today. Every
-      number touching {{ synthetic_symbols|join(', ') }} describes a random walk, not a market —
-      do not act on it.</div>
-  </section>
+  <div class="warning">⚠ {{ synthetic_symbols|join(', ') }} used synthetic data today. Every number
+    touching {{ synthetic_symbols|join(', ') }} describes a random walk, not a market — do not act on it.</div>
   {% endif %}
 
   {% if recommendation_rows %}
-  <section>
-    <h2>Lifecycle — Important Inquiry (Charles + George)</h2>
-    <table>
+  <div class="ccard">
+    <div class="ctitle">Lifecycle — Important Inquiry (Charles + George)</div>
+    <table class="stbl">
       <tr><th>Trader</th><th>Trigger</th><th>Recommendation</th><th>Detail</th></tr>
       {% for row in recommendation_rows %}
       <tr>
         <td>{{ row.trader }}</td>
         <td>{{ row.trigger.replace('_', ' ') }}</td>
-        <td><span class="pill blocked">{{ row.action }}</span></td>
+        <td><span class="bdg bench">{{ row.action }}</span></td>
         <td>{{ row.detail }}</td>
       </tr>
       {% endfor %}
     </table>
     <p class="note">Recommendation only — nothing is benched without the operator's explicit
       approval (<code>python main.py bench --trader X --trigger ...</code>).</p>
-  </section>
+  </div>
   {% endif %}
 
-  {% if ledger %}
-  <section>
-    <h2>Paper Ledger (Cornelius)</h2>
-    {% if ledger.positions %}
-    <table>
-      <tr><th>Ticker</th><th class="num">Shares</th><th class="num">Entry</th>
-          <th class="num">Price</th><th class="num">Days Held</th>
-          <th class="num">Market Value</th><th class="num">Unrealized P&amp;L</th></tr>
-      {% for row in ledger.positions %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        <td class="num">{{ row.shares }}</td>
-        <td class="num">${{ row.entry_price }}</td>
-        <td class="num">${{ row.price }}</td>
-        <td class="num">{{ row.days_held }}</td>
-        <td class="num">${{ "{:,.0f}".format(row.market_value) }}</td>
-        <td class="num {{ 'pos' if row.unrealized_pnl >= 0 else 'neg' }}">
-          {{ "{:+,.0f}".format(row.unrealized_pnl) }}
-        </td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p class="empty">No open positions. Cash: ${{ "{:,.0f}".format(ledger.cash) }}</p>
-    {% endif %}
-  </section>
-  {% endif %}
-
-  <section>
-    <h2>Target Allocation (post-regime)</h2>
-    {% if target_rows %}
-    <table>
-      <tr><th>Ticker</th><th class="num">Target %</th><th class="num">Target $</th><th>Contributors</th><th></th></tr>
-      {% for row in target_rows %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        <td class="num">{{ "%.1f"|format(row.target_pct) }}%</td>
-        <td class="num">${{ "{:,.0f}".format(row.target_dollars) }}</td>
-        <td>{{ row.contributors }}</td>
-        <td>{% if row.capped %}<span class="pill blocked">capped</span>{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p class="empty">No traders live today — no target positions. This is deliberate: no
-      delivery is worse than a delivery of "nothing today."</p>
-    {% endif %}
-  </section>
-
-  <section>
-    <h2>Charts</h2>
-    <div class="chart-grid">
-      {{ equity_chart }}
-      {{ drawdown_chart }}
-      {{ trader_bar_chart }}
-    </div>
-  </section>
-
-  <section>
-    <h2>Data (Wong)</h2>
-    <table>
-      <tr><th>Symbol</th><th class="num">Bars</th><th>Source</th><th>Last</th><th></th></tr>
-      {% for row in data_rows %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        <td class="num">{{ row.bars }}</td>
-        <td>{{ row.source }}</td>
-        <td>{{ row.last_date }}</td>
-        <td>{% if row.synthetic %}<span class="pill blocked">synthetic</span>{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
-
-  <section>
-    <h2>Compliance (David)</h2>
-    {% if compliance_rows %}
-    <table>
-      <tr><th>Symbol</th><th>Reason</th></tr>
-      {% for row in compliance_rows %}
-      <tr><td>{{ row.symbol }}</td><td>{{ row.reason }}</td></tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p class="empty">No blocks.</p>
-    {% endif %}
-  </section>
-
-  <section>
-    <h2>Regime (Greg)</h2>
-    <table>
-      <tr><th>Symbol</th><th>Regime</th><th class="num">ADX</th><th>Detail</th></tr>
-      {% for row in regime_rows %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        <td><span class="pill {{ row.regime }}">{{ row.regime }}</span></td>
-        <td class="num">{{ row.adx }}</td>
-        <td>{{ row.detail }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
-
-  <section>
-    <h2>News Sentiment (Edwin)</h2>
-    <p class="note">Informational only — Edwin never gates a strategy, adjusts a weight, or
-      blocks a trade. That's Charles's and David's job.</p>
-    {% if sentiment_rows %}
-    <table>
-      <tr><th>Symbol</th><th>Read</th><th class="num">Score</th><th class="num">Articles</th><th>Headline / note</th></tr>
-      {% for row in sentiment_rows %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        {% if row.available %}
-        <td><span class="pill {{ 'trending' if 'bullish' in row.label else ('choppy' if row.label == 'neutral' else 'blocked') }}">{{ row.label }}</span></td>
-        <td class="num {{ 'pos' if row.score >= 0 else 'neg' }}">{{ "%+.2f"|format(row.score) }}</td>
-        <td class="num">{{ row.article_count }}</td>
-        <td>{{ row.top_headline or row.note }}</td>
-        {% else %}
-        <td><span class="pill undecided">unavailable</span></td>
-        <td class="num">—</td>
-        <td class="num">—</td>
-        <td>{{ row.note }}</td>
-        {% endif %}
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p class="empty">No symbols to read.</p>
-    {% endif %}
-  </section>
-
-  <section>
-    <h2>Walk-Forward Validation (Charles)</h2>
-    <table>
-      <tr><th>Strategy</th><th>Symbol</th><th class="num">Folds</th><th class="num">Sharpe</th>
-          <th class="num">Max DD</th><th></th><th>Reason</th></tr>
-      {% for row in validation_rows %}
-      <tr>
-        <td>{{ row.strategy }}</td>
-        <td>{{ row.symbol }}</td>
-        <td class="num">{{ row.folds_passed }}/{{ row.folds_total }}</td>
-        <td class="num">{{ row.sharpe }}</td>
-        <td class="num">{{ row.max_drawdown }}%</td>
-        <td>{% if row.eligible %}<span class="pill live">pass</span>{% else %}<span class="pill blocked">fail</span>{% endif %}</td>
-        <td>{{ row.reject_reason }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
-
-  <section>
-    <h2>Risk &amp; Allocation (Charles + Greg)</h2>
-    <p><strong>Live:</strong>
-      {% if live_traders %}
-        {% for t in live_traders %}<span class="pill live">{{ t }}</span> {% endfor %}
-      {% else %}
-        <span class="empty">none today</span>
-      {% endif %}
-    </p>
-    {% if benched_traders %}
-    <p><strong>Benched:</strong></p>
-    <table>
-      <tr><th>Trader</th><th>Reason</th></tr>
-      {% for trader, reason in benched_traders %}
-      <tr><td><span class="pill benched">{{ trader }}</span></td><td>{{ reason }}</td></tr>
-      {% endfor %}
-    </table>
-    {% endif %}
-    {% if allocation_rows %}
-    <p style="margin-top:16px;"><strong>Regime-adjusted weights:</strong></p>
-    <table>
-      <tr><th>Strategy</th><th>Symbol</th><th>Regime</th><th></th>
-          <th class="num">Base %</th><th class="num">Adjusted %</th><th>Note</th></tr>
-      {% for row in allocation_rows %}
-      <tr>
-        <td>{{ row.strategy }}</td>
-        <td>{{ row.symbol }}</td>
-        <td><span class="pill {{ row.regime }}">{{ row.regime }}</span></td>
-        <td>{% if row.matched %}<span class="pill live">matched</span>{% else %}<span class="pill benched">mismatched</span>{% endif %}</td>
-        <td class="num">{{ row.base_weight }}%</td>
-        <td class="num">{{ row.adjusted_weight }}%</td>
-        <td>{{ row.note }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% endif %}
-  </section>
-
-  <section>
-    <h2>Buy-and-Hold Benchmark</h2>
-    <table>
-      <tr><th>Symbol</th><th class="num">Sharpe</th><th class="num">CAGR</th><th class="num">Max DD</th></tr>
-      {% for row in benchmark_rows %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        <td class="num">{{ row.sharpe }}</td>
-        <td class="num {{ 'pos' if row.cagr >= 0 else 'neg' }}">{{ row.cagr }}%</td>
-        <td class="num">{{ row.max_drawdown }}%</td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
-
-  <footer>
-    Not financial advice. Backtests overfit. Markets change. — Meridian Capital v1.0
-  </footer>
+  <div class="ccard"><div class="ctitle">Equity Curve</div>{{ equity_chart|safe }}</div>
+  <div class="ccard"><div class="ctitle">Drawdown</div>{{ drawdown_chart|safe }}</div>
+  <div class="ccard"><div class="ctitle">Live Trader Sharpe (backtest, in-sample)</div>{{ trader_bar_chart|safe }}</div>
 </div>
+
+<!-- STRATEGIES -->
+<div id="p-strategies" class="page">
+  <div class="shdr">Strategy Roster — click any row for detail</div>
+  {% if roster_rows %}
+  <table class="stbl">
+    <thead><tr><th>Callsign</th><th>Style</th><th>Status</th><th class="num">Sharpe</th>
+      <th class="num">CAGR</th><th class="num">Max DD</th><th class="num">W/F</th><th class="num">Size</th></tr></thead>
+    <tbody>
+      {% for r in roster_rows %}
+      <tr class="clickable" onclick="openModal('{{ r.callsign }}')">
+        <td><b style="color:var(--gold)">{{ r.callsign }}</b></td>
+        <td style="color:var(--muted)">{{ r.style }}</td>
+        <td><span class="bdg {{ {'live':'live','watch':'watch','benched':'bench','flat':'flat'}[r.status] }}">{{ r.status|upper }}</span></td>
+        <td class="num">{{ r.sharpe if r.sharpe is not none else "—" }}</td>
+        <td class="num {{ 'up' if r.cagr is not none and r.cagr >= 0 else 'dn' if r.cagr is not none else '' }}">{{ (r.cagr|string + '%') if r.cagr is not none else "—" }}</td>
+        <td class="num">{{ (r.max_drawdown|string + '%') if r.max_drawdown is not none else "—" }}</td>
+        <td class="num">{{ r.walkforward }}</td>
+        <td class="num">{{ (r.position_pct|string + '%') if r.position_pct is not none else "—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No strategies configured.</p>
+  {% endif %}
+
+  <div class="shdr">Target Allocation (post-regime)</div>
+  {% if target_rows %}
+  <table class="stbl">
+    <tr><th>Ticker</th><th class="num">Target %</th><th class="num">Target $</th><th>Contributors</th><th></th></tr>
+    {% for row in target_rows %}
+    <tr>
+      <td>{{ row.symbol }}</td>
+      <td class="num">{{ "%.1f"|format(row.target_pct) }}%</td>
+      <td class="num">${{ "{:,.0f}".format(row.target_dollars) }}</td>
+      <td>{{ row.contributors }}</td>
+      <td>{% if row.capped %}<span class="bdg bench">capped</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="empty">No traders live today — no target positions. This is deliberate: no
+    delivery is worse than a delivery of "nothing today."</p>
+  {% endif %}
+</div>
+
+<!-- TRADES -->
+<div id="p-trades" class="page">
+  <div class="shdr">Open Positions (Cornelius — Paper Ledger)</div>
+  {% if not ledger %}
+  <p class="empty">Research mode has no fills to show — the Strategies tab's "Target Allocation" is
+    a target, not a position. Run <code>python main.py paper</code> to trade this allocation against
+    the persisted paper ledger and see real (paper) positions here.</p>
+  {% elif ledger.halted %}
+  <div class="warning">⛔ HALTED: {{ ledger.halt_reason }} — clear with
+    <code>python main.py clear-halt</code> before this account trades again.</div>
+  {% endif %}
+
+  {% if trade_rows %}
+  {% for t in trade_rows %}
+  <div class="tcard">
+    <div class="thdr">
+      <div><div class="tticker">{{ t.symbol }}
+        <span style="font-size:11px;color:var(--muted);font-weight:400">· {{ t.contributors }}</span></div>
+        <div class="tstrat">Day {{ t.days_held }} · {{ t.portfolio_pct }}% of portfolio
+          {% if t.target_pct is not none %}· target {{ t.target_pct }}%{% endif %}</div></div>
+      <span class="bdg live">LIVE</span>
+    </div>
+    <div class="plrow">
+      <div class="plbox"><div class="plbox-lbl">Unrealized P/L</div>
+        <div class="plbox-val {{ 'up' if t.unrealized_pnl >= 0 else 'dn' }}">{{ "{:+,.2f}".format(t.unrealized_pnl) }}</div>
+        <div class="plbox-sub">{{ "%+.2f"|format(t.unrealized_pnl_pct) }}% since entry</div></div>
+      <div class="plbox"><div class="plbox-lbl">Market Value</div>
+        <div class="plbox-val">${{ "{:,.2f}".format(t.market_value) }}</div>
+        <div class="plbox-sub">{{ t.portfolio_pct }}% of portfolio</div></div>
+      <div class="plbox"><div class="plbox-lbl">Shares</div>
+        <div class="plbox-val">{{ t.shares }}</div>
+        <div class="plbox-sub">entry ${{ t.entry_price }}</div></div>
+    </div>
+    <div class="tmeta">
+      <div><span class="tmeta-lbl">Entry</span>${{ t.entry_price }}</div>
+      <div><span class="tmeta-lbl">Current</span>${{ t.price }}</div>
+      <div><span class="tmeta-lbl">Days Held</span>{{ t.days_held }}</div>
+    </div>
+  </div>
+  {% endfor %}
+  {% elif ledger %}
+  <p class="empty">Cash ${{ "{:,.2f}".format(ledger.cash) }}. No open positions.</p>
+  {% endif %}
+</div>
+
+<!-- AGENTS -->
+<div id="p-agents" class="page">
+  <div class="shdr">Agent Standup — Today</div>
+  <div class="agrid">
+    {% for a in agent_notes %}
+    <div class="acard">
+      <div class="aname">{{ a.name }} · {{ a.role }}</div>
+      <div class="amsg">{{ a.message }}</div>
+      <div class="astatus"><div class="dot {{ 'w' if a.warn else '' }}"></div><div class="astat-txt">{{ a.status }}</div></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- DETAIL -->
+<div id="p-detail" class="page">
+  <div class="shdr">Data (Wong)</div>
+  <table class="stbl">
+    <tr><th>Symbol</th><th class="num">Bars</th><th>Source</th><th>Last</th><th></th></tr>
+    {% for row in data_rows %}
+    <tr>
+      <td>{{ row.symbol }}</td>
+      <td class="num">{{ row.bars }}</td>
+      <td>{{ row.source }}</td>
+      <td>{{ row.last_date }}</td>
+      <td>{% if row.synthetic %}<span class="bdg bench">synthetic</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <div class="shdr">Compliance (David)</div>
+  {% if compliance_rows %}
+  <table class="stbl">
+    <tr><th>Symbol</th><th>Reason</th></tr>
+    {% for row in compliance_rows %}
+    <tr><td>{{ row.symbol }}</td><td>{{ row.reason }}</td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="empty">No blocks.</p>
+  {% endif %}
+
+  <div class="shdr">Regime (Greg)</div>
+  <table class="stbl">
+    <tr><th>Symbol</th><th>Regime</th><th class="num">ADX</th><th>Detail</th></tr>
+    {% for row in regime_rows %}
+    <tr>
+      <td>{{ row.symbol }}</td>
+      <td><span class="bdg {{ row.regime }}">{{ row.regime }}</span></td>
+      <td class="num">{{ row.adx }}</td>
+      <td>{{ row.detail }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <div class="shdr">Walk-Forward Validation (Charles)</div>
+  <table class="stbl">
+    <tr><th>Strategy</th><th>Symbol</th><th class="num">Folds</th><th class="num">Sharpe</th>
+        <th class="num">Max DD</th><th></th><th>Reason</th></tr>
+    {% for row in validation_rows %}
+    <tr>
+      <td>{{ row.strategy }}</td>
+      <td>{{ row.symbol }}</td>
+      <td class="num">{{ row.folds_passed }}/{{ row.folds_total }}</td>
+      <td class="num">{{ row.sharpe }}</td>
+      <td class="num">{{ row.max_drawdown }}%</td>
+      <td>{% if row.eligible %}<span class="bdg live">pass</span>{% else %}<span class="bdg bench">fail</span>{% endif %}</td>
+      <td>{{ row.reject_reason }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+
+  <div class="shdr">Regime-Adjusted Weights (Charles + Greg)</div>
+  {% if allocation_rows %}
+  <table class="stbl">
+    <tr><th>Strategy</th><th>Symbol</th><th>Regime</th><th></th>
+        <th class="num">Base %</th><th class="num">Adjusted %</th><th>Note</th></tr>
+    {% for row in allocation_rows %}
+    <tr>
+      <td>{{ row.strategy }}</td>
+      <td>{{ row.symbol }}</td>
+      <td><span class="bdg {{ row.regime }}">{{ row.regime }}</span></td>
+      <td>{% if row.matched %}<span class="bdg live">matched</span>{% else %}<span class="bdg bench">mismatched</span>{% endif %}</td>
+      <td class="num">{{ row.base_weight }}%</td>
+      <td class="num">{{ row.adjusted_weight }}%</td>
+      <td>{{ row.note }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="empty">No live traders today.</p>
+  {% endif %}
+
+  <div class="shdr">News Sentiment (Edwin) — informational only, never gates a strategy</div>
+  {% if sentiment_rows %}
+  <table class="stbl">
+    <tr><th>Symbol</th><th>Read</th><th class="num">Score</th><th class="num">Articles</th><th>Note / Headline</th></tr>
+    {% for row in sentiment_rows %}
+    <tr>
+      <td>{{ row.symbol }}</td>
+      <td>{% if row.available %}<span class="bdg {{ 'live' if 'bullish' in row.label else ('bench' if 'bearish' in row.label else 'flat') }}">{{ row.label }}</span>{% else %}<span class="bdg flat">unavailable</span>{% endif %}</td>
+      <td class="num">{{ row.score if row.available else "—" }}</td>
+      <td class="num">{{ row.article_count if row.available else "—" }}</td>
+      <td>{{ row.top_headline if row.available else row.note }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="empty">Sentiment disabled.</p>
+  {% endif %}
+
+  <div class="shdr">Buy-and-Hold Benchmark</div>
+  <table class="stbl">
+    <tr><th>Symbol</th><th class="num">Sharpe</th><th class="num">CAGR</th><th class="num">Max DD</th></tr>
+    {% for row in benchmark_rows %}
+    <tr>
+      <td>{{ row.symbol }}</td>
+      <td class="num">{{ row.sharpe }}</td>
+      <td class="num {{ 'up' if row.cagr >= 0 else 'dn' }}">{{ row.cagr }}%</td>
+      <td class="num">{{ row.max_drawdown }}%</td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+</div>
+
+<!-- MODAL -->
+<div class="overlay" id="modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="mhdr">
+      <div><div class="mtitle" id="m-title"></div><div class="msub" id="m-sub"></div></div>
+      <button class="mbtn" onclick="closeModal()">✕</button>
+    </div>
+    <div class="mbody" id="m-body"></div>
+  </div>
+</div>
+
+<footer>Not financial advice. Backtests overfit. Markets change. — Meridian Capital v1.0</footer>
+
+<script>
+const STRATS = {{ strategy_detail_json|safe }};
+
+function go(id, btn) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('p-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+const STATUS_COLOR = {live: 'var(--green)', watch: 'var(--gold)', benched: 'var(--red)', flat: 'var(--muted)'};
+
+function openModal(name) {
+  const s = STRATS[name];
+  if (!s) return;
+  document.getElementById('m-title').textContent = name;
+  document.getElementById('m-sub').textContent = s.style;
+  const color = STATUS_COLOR[s.status] || 'var(--muted)';
+  const cagrClass = (s.cagr !== null && s.cagr >= 0) ? 'kv-up' : 'kv-dn';
+  let rows = `
+    <div class="kv"><span class="kk">Status</span><span style="color:${color}">${s.status.toUpperCase()}</span></div>
+    <div class="kv"><span class="kk">Best symbol</span><span>${s.symbol}</span></div>
+    <div class="kv"><span class="kk">Sharpe</span><span>${s.sharpe ?? '—'}</span></div>
+    <div class="kv"><span class="kk">CAGR</span><span class="${s.cagr !== null ? cagrClass : ''}">${s.cagr !== null ? s.cagr + '%' : '—'}</span></div>
+    <div class="kv"><span class="kk">Max drawdown</span><span class="kv-dn">${s.max_drawdown !== null ? s.max_drawdown + '%' : '—'}</span></div>
+    <div class="kv"><span class="kk">Walk-forward</span><span>${s.walkforward}</span></div>
+    <div class="kv"><span class="kk">Position size</span><span>${s.position_pct !== null ? s.position_pct + '%' : '—'}</span></div>
+    <div class="kv"><span class="kk">Regime</span><span class="kv-gld">${s.regime}</span></div>`;
+  let note = '';
+  if (s.status === 'benched' && s.reason) note = s.reason;
+  else if (s.status === 'watch') note = 'Cleared walk-forward on at least one symbol but is not sized today -- capped roster or a correlated risk-parity slot is already spoken for.';
+  else if (s.status === 'flat' && s.reject_reason) note = 'Not eligible: ' + s.reject_reason;
+  else if (s.status === 'live') note = "Live and sized today per Charles's risk-parity allocation, adjusted by Greg's regime read.";
+
+  document.getElementById('m-body').innerHTML = `
+    <div class="msec"><div class="msec-title">Performance</div>${rows}</div>
+    ${note ? `<div class="msec"><div class="msec-title">Note</div><div class="amsg">${note}</div></div>` : ''}`;
+  document.getElementById('modal').classList.add('open');
+}
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+</script>
 </body>
 </html>
