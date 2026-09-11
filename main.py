@@ -127,7 +127,7 @@ def run_research(config, symbols: list[str] | None = None,
     george = ReportingAgent(config)
     dashboard = george.run(market, compliance, results, benchmarks, risk_report,
                            regime_report, recommendations=recommendations,
-                           post_slack=post_slack)
+                           strategies=leo.strategies, post_slack=post_slack)
 
     frame = results_frame(results)
     _print_report(config, market, frame, benchmarks, blocked, risk_report,
@@ -162,7 +162,7 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
     george = ReportingAgent(config)
     dashboard = george.run(market, compliance, results, benchmarks, risk_report,
                            regime_report, ledger=ledger, recommendations=recommendations,
-                           post_slack=post_slack)
+                           strategies=leo.strategies, post_slack=post_slack)
 
     frame = results_frame(results)
     _print_report(config, market, frame, benchmarks, blocked, risk_report,
