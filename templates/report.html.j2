@@ -96,6 +96,50 @@
   svg { width: 100%; height: auto; border-radius: 6px; border: 1px solid #2A3B5C; }
   .chart-grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
   footer { text-align: center; font-size: 11px; color: #5f6c8a; margin-top: 40px; }
+
+  .roster {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+    gap: 18px;
+  }
+  .roster .member {
+    background: #142544;
+    border: 1px solid #2A3B5C;
+    border-radius: 6px;
+    padding: 16px 16px 18px;
+    text-align: center;
+  }
+  .roster .portrait {
+    width: 96px;
+    height: 96px;
+    border-radius: 50%;
+    object-fit: cover;
+    object-position: center top;
+    border: 1px solid var(--gold);
+    background: #0F1C33;
+    display: block;
+    margin: 0 auto 12px;
+  }
+  .roster .member-name {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 17px;
+    letter-spacing: 1px;
+    margin: 0;
+  }
+  .roster .member-role {
+    font-size: 11px;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin: 5px 0 9px;
+  }
+  .roster .member-desc {
+    font-size: 12px;
+    line-height: 1.55;
+    color: #9aa5bd;
+    margin: 0;
+    text-align: left;
+  }
 </style>
 </head>
 <body>
@@ -125,6 +169,60 @@
       <p class="generated">{{ generated_at }}</p>
     </div>
   </header>
+
+  <section>
+    <h2>The Floor</h2>
+    <div class="roster">
+      <div class="member">
+        <img class="portrait" src="../static/team/wong.jpg" alt="Wong, Data Agent">
+        <p class="member-name">Wong</p>
+        <p class="member-role">Data Agent</p>
+        <p class="member-desc">Sources daily OHLCV history across the universe: yfinance for equities, ccxt against Binance for crypto. When a feed fails, falls back to a seeded random walk so the pipeline never breaks, and marks the result synthetic so no downstream stage mistakes it for a real result.</p>
+      </div>
+      <div class="member">
+        <img class="portrait" src="../static/team/david.jpg" alt="David, Compliance Agent">
+        <p class="member-name">David</p>
+        <p class="member-role">Compliance Agent</p>
+        <p class="member-desc">Runs data quality checks before any strategy touches the tape: multi-day gaps, zero or negative prices, stale feeds, and implausible day-over-day moves that suggest an unadjusted corporate action. Holds standing authority to block a ticker for the day.</p>
+      </div>
+      <div class="member">
+        <img class="portrait" src="../static/team/leo.jpg" alt="Leo, Backtest Agent">
+        <p class="member-name">Leo</p>
+        <p class="member-role">Backtest Agent</p>
+        <p class="member-desc">Runs every strategy and ticker combination through the vectorized engine with full cost modeling — commission and slippage charged on position change, so a round trip pays both ways. Produces the raw in-sample results the rest of the desk works from.</p>
+      </div>
+      <div class="member">
+        <img class="portrait" src="../static/team/greg.jpg" alt="Greg, Regime Agent">
+        <p class="member-name">Greg</p>
+        <p class="member-role">Regime Agent</p>
+        <p class="member-desc">Classifies each ticker independently as trending, choppy, or undecided using ADX, moving-average slope, and realized volatility percentile. Halves allocation and requires multi-day confirmation for traders working against their regime — tilts the book, never benches outright.</p>
+      </div>
+      <div class="member">
+        <img class="portrait" src="../static/team/charles.jpg" alt="Charles, Risk Agent">
+        <p class="member-name">Charles</p>
+        <p class="member-role">Risk Agent</p>
+        <p class="member-desc">Walk-forward validates every candidate across five folds, hard-rejects anything breaching the drawdown limit, and caps the live roster. Sizes survivors by inverse-volatility risk parity, with correlated mean-reversion traders sharing a single slot so true exposure isn't silently doubled.</p>
+      </div>
+      <div class="member">
+        <img class="portrait" src="../static/team/edwin.jpg" alt="Edwin, Sentiment Agent">
+        <p class="member-name">Edwin</p>
+        <p class="member-role">Sentiment Agent</p>
+        <p class="member-desc">Surfaces news sentiment flags across the universe via Alpha Vantage. Strictly informational: never sizes a position, never vetoes a strategy, never touches capital.</p>
+      </div>
+      <div class="member">
+        <img class="portrait" src="../static/team/cornelius.jpg" alt="Cornelius, Execution Agent">
+        <p class="member-name">Cornelius</p>
+        <p class="member-role">Execution Agent</p>
+        <p class="member-desc">Implements the executor across research, paper, and live modes. Simulates fills against the persisted ledger, marks positions to market, and enforces the halt conditions that stop trading before the account does.</p>
+      </div>
+      <div class="member">
+        <img class="portrait" src="../static/team/george.jpg" alt="George, Reporting Agent">
+        <p class="member-name">George</p>
+        <p class="member-role">Reporting Agent</p>
+        <p class="member-desc">Assembles this dashboard from every stage of the pipeline and delivers the daily standup to Slack. Flags synthetic data and empty-roster days explicitly rather than reporting nothing.</p>
+      </div>
+    </div>
+  </section>
 
   <section>
     <h2>Key Metrics</h2>
