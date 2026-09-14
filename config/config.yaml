@@ -74,6 +74,36 @@ risk:
   target_annual_vol: 0.15
   risk_free_rate: 0.0
 
+options:
+  # Master switch. If false, `paper-options` mode exits cleanly without doing
+  # anything. Existing stock pipeline (`research`, `paper`) is unaffected.
+  enabled: true
+
+  # Separate paper pool. Not deducted from `capital.starting_paper_capital`
+  # -- the two ledgers are fully independent.
+  starting_capital: 1000.0
+
+  # Ledger persists here between runs, same pattern as the stock paper ledger.
+  ledger_path: reports/options_ledger.json
+
+  # Hard caps. Enforced by Theo (OptionsRiskAgent) on every proposed trade.
+  caps:
+    max_premium_per_contract: 150.0   # cost of a single contract (bid/ask * 100)
+    max_total_open_premium: 400.0     # sum of open premium across all positions
+    max_concurrent_contracts: 2       # count of open positions
+    bucket_loss_cutoff_pct: 0.50      # halt if pool down 50% from starting_capital
+
+  # Instruments Theo will approve. Anything not on this list is auto-rejected,
+  # so accidentally shorting or writing an option is impossible by construction.
+  allowed_types:
+    - long_call
+    - long_put
+
+  # Underlyings Augustus (OptionsDataAgent) will pull chains for.
+  underlyings:
+    - SPY
+    - QQQ
+
 regime:
   # ADX: standard Wilder period. High ADX + a consistently-signed MA slope +
   # normal-to-high vol => trending. Low ADX + an oscillating slope + price
