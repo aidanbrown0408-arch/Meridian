@@ -61,7 +61,7 @@ class OptionsRiskAgent:
     def __init__(self, config: Config):
         self.config = config
         self.enabled = bool(config.get("options.enabled", False))
-        self.starting_capital = float(config.get("options.starting_capital"))
+        self.starting_capital = float(config.get("options.bucket.starting_capital"))
         caps = config.section("options.caps")
         self.max_premium_per_contract = float(caps["max_premium_per_contract"])
         self.max_total_open_premium = float(caps["max_total_open_premium"])
