@@ -200,7 +200,7 @@ def test_expired_position_settles_at_a_supplied_price():
 def test_position_expiring_today_is_not_settled_yet():
     broker = _tmp_broker()
     ledger = broker.load_ledger()
-    pos = _position(broker, days_out=0)
+    pos = _position(broker, days_out=1)
     ledger.positions[pos.key] = pos
     broker.save_ledger(ledger)
 
