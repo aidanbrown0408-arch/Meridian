@@ -4,9 +4,9 @@
 
 system:
   name: Meridian Capital
-  version: "1.0"
+  version: "1.0"  
   timezone: America/New_York
-  # research | paper | live  — overridden by the CLI subcommand
+  # research | paper | live  — overridden by the CLI subcommand  
   default_mode: research
 
 universe:
@@ -44,13 +44,13 @@ data:
   use_cache: true
   cache_ttl_hours: 12
 
-costs:
+costs:  
   # bps, one-way. Round-trip is 2x these figures.
   stocks:
     commission_bps: 5.0
     slippage_bps: 5.0
   crypto:
-    commission_bps: 5.0
+    commission_bps: 5.0 
     slippage_bps: 15.0
 
 compliance:
@@ -68,47 +68,44 @@ compliance:
 risk:
   profile: balanced
   max_portfolio_drawdown: 0.15
-  max_strategy_drawdown: 0.25
+  max_strategy_drawdown: 0.25 
   max_position_pct: 0.25
   max_live_traders: 3
   target_annual_vol: 0.15
   risk_free_rate: 0.0
-
+  
 options:
-  # Master switch. If false, `paper-options` mode exits cleanly without doing
+  # Master switch. If false, `paper-options` mode exits cleanly without doing 
   # anything. Existing stock pipeline (`research`, `paper`) is unaffected.
   enabled: true
-
-  # Separate paper pool. Not deducted from `capital.starting_paper_capital`
-  # -- the two ledgers are fully independent.
-  starting_capital: 1000.0
-
-  # Ledger persists here between runs, same pattern as the stock paper ledger.
+  
   ledger_path: reports/options_ledger.json
 
-  # Hard caps. Enforced by Theo (OptionsRiskAgent) on every proposed trade.
-  caps:
-    max_premium_per_contract: 150.0   # cost of a single contract (bid/ask * 100)
-    max_total_open_premium: 400.0     # sum of open premium across all positions
-    max_concurrent_contracts: 2       # count of open positions
-    bucket_loss_cutoff_pct: 0.50      # halt if pool down 50% from starting_capital
+  bucket:
+    starting_capital: 1000.0
 
-  # Instruments Theo will approve. Anything not on this list is auto-rejected,
-  # so accidentally shorting or writing an option is impossible by construction.
+  caps:
+    max_premium_per_contract: 150.0
+    max_total_open_premium: 400.0
+    max_concurrent_contracts: 2
+    bucket_loss_cutoff_pct: 0.50
+
   allowed_types:
     - long_call
     - long_put
 
-  # Underlyings Augustus (OptionsDataAgent) will pull chains for.
-  underlyings:
+  underlyings:  
     - SPY
     - QQQ
 
+  costs:
+    commission_per_contract: 0.65
+
 regime:
-  # ADX: standard Wilder period. High ADX + a consistently-signed MA slope +
+  # ADX: standard Wilder period. High ADX + a consistently-signed MA slope + 
   # normal-to-high vol => trending. Low ADX + an oscillating slope + price
   # bouncing inside its recent range => choppy. Neither clearly holding =>
-  # undecided, no adjustment.
+  # undecided, no adjustment.  
   adx_period: 14
   adx_trending_threshold: 25.0
   adx_choppy_threshold: 20.0
@@ -141,14 +138,14 @@ validation:
 strategies:
   ORBIT:
     class: OrbitStrategy
-    enabled: true
+    enabled: true 
     params: {fast: 20, slow: 100}
-  FLUX:
+  FLUX:  
     class: FluxStrategy
     enabled: true
     params: {fast: 10, slow: 50}
   REVERT:
-    class: RevertStrategy
+    class: RevertStrategy 
     enabled: true
     params: {period: 14, entry: 30, exit: 55}
   SURGE:
@@ -159,7 +156,7 @@ strategies:
   SPARK:
     class: SparkStrategy
     enabled: true
-    params: {entry_window: 20, exit_window: 10}
+    params: {entry_window: 20, exit_window: 10} 
   ANCHOR:
     class: AnchorStrategy
     enabled: true
@@ -167,7 +164,7 @@ strategies:
 
 execution:
   # Cornelius. Paper ledger is persisted JSON so the account survives
-  # between daily runs -- this is what builds the forward-tested track
+  # between daily runs -- this is what builds the forward-tested track 
   # record the spec's live-trading gate cares about.
   paper_ledger_path: reports/paper_ledger.json
   # Skip a rebalance smaller than this -- avoids churning on rounding-sized
@@ -175,33 +172,33 @@ execution:
   min_trade_dollars: 25.0
 
 lifecycle:
-  # Charles/George's benching triggers (spec §10) and the operator-approval
+  # Charles/George's benching triggers (spec §10) and the operator-approval 
   # gate around them.
   bench_state_path: reports/bench_state.json
-  # "fails walk-forward on N consecutive daily runs."
+  # "fails walk-forward on N consecutive daily runs." 
   validation_fail_consecutive_days: 3
   # Live-drift needs a real shadow track record before it means anything.
-  drift_min_track_days: 10
+  drift_min_track_days: 10 
   drift_lookback_days: 20
   # Flag live-drift when the trailing shadow Sharpe falls below this
   # fraction of the Sharpe its backtest promised.
   drift_sharpe_ratio_threshold: 0.5
 
 slack:
-  # Everything ships through one incoming webhook. Left unset here on
+  # Everything ships through one incoming webhook. Left unset here on 
   # purpose -- set the MERIDIAN_SLACK_WEBHOOK_URL environment variable
   # rather than committing a real webhook URL to config.
   webhook_url_env: MERIDIAN_SLACK_WEBHOOK_URL
   post_daily_standup: true
 
-visual:
+visual: 
   # Spec §12 — classic Wall Street: navy/gold, serif.
   primary_color: "#0F1C33"
   accent_color: "#D4AF6A"
   text_on_navy: "#E8E3D3"
   gain_color: "#7FBF7F"
   loss_color: "#C97A7A"
-  serif_font: "Playfair Display"
+  serif_font: "Playfair Display" 
   body_font: Georgia
 
 logging:
