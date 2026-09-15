@@ -21,14 +21,13 @@ spec's four named entry points, but a necessary way to exercise it from a
 CLI rather than an interactive Slack app.
 
 `paper-options` is a fully separate track: Augustus fetches SPY/QQQ option
-chains, Theo enforces the four hard caps, and Joseph executes against its
-own $1,000 ledger (`reports/options_ledger.json`) -- never blended with the
-$5,000 stock ledger, never sharing a halt. As of Phase A4 no strategy
-proposes trades yet, so a `paper-options` run only exercises data fetch,
-expiration settlement, the bucket loss-cutoff check, and ledger persistence
-end-to-end; the first real options strategy arrives in Phase B. `killswitch`
-and `clear-halt` take an explicit `--options` flag to pick which bucket they
-target -- omitting it always means the stock side, so a stock-side habit
+chains, the SPARK-calls strategy (`strategies/options_strategy.py`) checks
+today's SPARK signal on each underlying using Wong's bars read-only, Theo
+enforces the four hard caps, and Joseph executes against its own $1,000
+ledger (`reports/options_ledger.json`) -- never blended with the $5,000
+stock ledger, never sharing a halt. `killswitch` and `clear-halt` take an
+explicit `--options` flag to pick which bucket they target -- omitting it
+always means the stock side, so a stock-side habit
 (`python main.py killswitch`) can never accidentally reach into the options
 bucket, or vice versa.
 """
@@ -53,6 +52,7 @@ from agents.regime_agent import RegimeAgent, RegimeReport
 from agents.reporting_agent import ReportingAgent
 from agents.risk_agent import RiskAgent, RiskReport
 from backtester.engine import results_frame
+from strategies.options_strategy import SignalCheck, build_proposals
 from utils.config import load_config
 from utils.logging_setup import get_logger, setup_logging
 
@@ -189,35 +189,51 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
 # ------------------------------------------------------------------ paper-options
 
 def run_paper_options(config, symbols: list[str] | None = None):
-    """Augustus -> Theo -> Joseph. Completely separate from `_run_pipeline`
-    above: its own agents, its own $1,000 ledger, no shared state with the
-    stock side at all.
+    """Augustus -> the SPARK-calls strategy -> Theo -> Joseph. Completely
+    separate from `_run_pipeline` above: its own ledger, no shared state
+    with the stock side -- except reading Wong's bars, read-only, purely
+    to answer "is SPARK long today" for each underlying. Nothing here ever
+    proposes, opens, or touches a position on the $5,000 stock ledger.
 
-    Phase A4: no strategy proposes trades yet (that's Phase B), so this run
-    always calls `joseph.execute(proposals=[], ...)`. That still exercises
-    the real path end-to-end -- live chain fetch, expiration settlement on
-    any already-open position, the bucket loss-cutoff check, and ledger
-    persistence -- with zero risk, since an empty proposal list can never
-    open a position.
+    Phase B: one entry rule (`strategies/options_strategy.py`), Theo still
+    has final say on every proposal, and Joseph still owns the only write
+    path to the ledger. Phase A4's proof (empty proposals still exercise
+    expiration settlement / cutoff / persistence) still holds whenever the
+    signal is flat or the chain comes back synthetic.
     """
     if not config.get("options.enabled", False):
         log.warning("options.enabled is false in config -- paper-options is a "
                    "no-op. Set options.enabled: true to turn the bucket on.")
         return None
 
+    underlyings = symbols or list(config.get("options.underlyings"))
+
+    # Read-only borrow of Wong's stock bars, purely to evaluate today's
+    # SPARK signal. Never writes to, or reads from, the stock ledger.
+    wong = DataAgent(config)
+    market = wong.fetch_universe(underlyings)
+
     augustus = OptionsDataAgent(config)
-    chains = augustus.fetch_universe(symbols)
+    chains = augustus.fetch_universe(underlyings)
     prices = augustus.price_lookup(chains)
 
     theo = OptionsRiskAgent(config)
     joseph = OptionsBroker(config, risk_agent=theo)
-    ledger = joseph.execute(proposals=[], prices=prices)
 
-    _print_options_report(chains, ledger, prices)
+    # Peek at the current ledger to avoid pyramiding (one call per
+    # underlying at a time) -- read-only, Joseph's execute() below is
+    # still the only thing that writes it.
+    current = joseph.load_ledger()
+    proposals, checks = build_proposals(config, market, chains, current, augustus)
+
+    ledger = joseph.execute(proposals=proposals, prices=prices)
+
+    _print_options_report(chains, ledger, prices, checks)
     return ledger
 
 
-def _print_options_report(chains: dict, ledger, prices: dict) -> None:
+def _print_options_report(chains: dict, ledger, prices: dict,
+                          checks: list[SignalCheck]) -> None:
     print("\n" + "=" * 78)
     print(f"  OPTIONS PAPER REPORT — {datetime.now():%Y-%m-%d %H:%M}")
     print("=" * 78)
@@ -228,6 +244,12 @@ def _print_options_report(chains: dict, ledger, prices: dict) -> None:
         print(f"    {symbol:<10} {len(chain.expirations)} exp  "
               f"{len(chain.calls):>3} calls  {len(chain.puts):>3} puts  "
               f"source={chain.data_source:<10}{flag}")
+
+    if checks:
+        print(f"\n  STRATEGY SIGNAL ({checks[0].trigger} -> calls only, Phase B)")
+        for c in checks:
+            mark = "📈" if c.signal_long else "  "
+            print(f"    {mark} {c.underlying:<10} {c.detail}")
 
     equity = ledger.mark_to_market(prices)
     pnl = equity - ledger.starting_capital
@@ -256,11 +278,8 @@ def _print_options_report(chains: dict, ledger, prices: dict) -> None:
     synthetic = [s for s, c in chains.items() if c.is_synthetic]
     if synthetic:
         print(f"\n  ⚠ {', '.join(synthetic)} used a synthetic option chain. Not tradable "
-              "data -- price_lookup() already excluded it from `prices` above.")
+              "data -- any signal there was skipped, never proposed.")
 
-    print("\n  No strategy proposes trades yet (Phase B) -- this run only exercised "
-          "data fetch,\n  expiration settlement, the bucket loss-cutoff check, and "
-          "ledger persistence.")
     print("=" * 78 + "\n")
 
 
