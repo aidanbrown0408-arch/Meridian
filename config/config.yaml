@@ -101,6 +101,19 @@ options:
   costs:
     commission_per_contract: 0.65
 
+  # Augustus (OptionsDataAgent) — Phase A3.
+  data:
+    # yfinance-down fallback, same shape as `data.allow_synthetic_fallback`
+    # for the stock side. A synthetic chain is tagged and excluded from
+    # price_lookup() -- it lets the pipeline dry-run, never trades on it.
+    allow_synthetic_fallback: true
+    # How many of the nearest-dated expirations (within the DTE window
+    # below) to pull per underlying. Keeps each fetch small and Theo/Joseph
+    # only ever see a handful of strikes per name.
+    max_expirations: 4
+    min_days_to_expiration: 1
+    max_days_to_expiration: 60
+
 regime:
   # ADX: standard Wilder period. High ADX + a consistently-signed MA slope + 
   # normal-to-high vol => trending. Low ADX + an oscillating slope + price
