@@ -114,6 +114,18 @@ options:
     min_days_to_expiration: 1
     max_days_to_expiration: 60
 
+  # Phase B: the first (and so far only) options strategy -- "buy a call
+  # when this stock-side trader's live signal is long." Reuses SPARK's
+  # own configured params above (strategies.SPARK.params) so the options
+  # entry never drifts from what Leo/Charles see on the stock side.
+  strategy:
+    trigger_strategy: SPARK
+    contracts_per_signal: 1
+    # Skip an expiration inside this many days even if Augustus kept it --
+    # avoids opening something that's about to expire before the next
+    # scheduled run can act on it.
+    min_days_to_expiration: 3
+
 regime:
   # ADX: standard Wilder period. High ADX + a consistently-signed MA slope + 
   # normal-to-high vol => trending. Low ADX + an oscillating slope + price
