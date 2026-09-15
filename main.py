@@ -2,9 +2,10 @@
 
     python main.py research           # backtest + validate + console report
     python main.py paper              # + simulated fills against a persisted ledger
+    python main.py paper-options      # options bucket: Augustus -> Theo -> Joseph
     python main.py live               # real money             (Phase 5, triple-gated)
-    python main.py killswitch         # flatten every open paper position + halt
-    python main.py clear-halt         # manually clear a killswitch halt
+    python main.py killswitch [--options]     # flatten open positions + halt
+    python main.py clear-halt [--options]     # manually clear a killswitch halt
     python main.py bench   --trader X --trigger validation|drift --reason "..."
     python main.py unbench --trader X --trigger validation|drift
 
@@ -18,6 +19,18 @@ ledger and the lifecycle agent's benching recommendations. `bench`/`unbench`/
 "no automatic benching without operator approval" rule -- not one of the
 spec's four named entry points, but a necessary way to exercise it from a
 CLI rather than an interactive Slack app.
+
+`paper-options` is a fully separate track: Augustus fetches SPY/QQQ option
+chains, Theo enforces the four hard caps, and Joseph executes against its
+own $1,000 ledger (`reports/options_ledger.json`) -- never blended with the
+$5,000 stock ledger, never sharing a halt. As of Phase A4 no strategy
+proposes trades yet, so a `paper-options` run only exercises data fetch,
+expiration settlement, the bucket loss-cutoff check, and ledger persistence
+end-to-end; the first real options strategy arrives in Phase B. `killswitch`
+and `clear-halt` take an explicit `--options` flag to pick which bucket they
+target -- omitting it always means the stock side, so a stock-side habit
+(`python main.py killswitch`) can never accidentally reach into the options
+bucket, or vice versa.
 """
 
 from __future__ import annotations
@@ -32,6 +45,9 @@ from agents.backtest_agent import BacktestAgent
 from agents.compliance_agent import ComplianceAgent
 from agents.data_agent import DataAgent
 from agents.lifecycle_agent import LifecycleAgent
+from agents.options_broker import OptionsBroker
+from agents.options_data_agent import OptionsDataAgent
+from agents.options_risk_agent import OptionsRiskAgent
 from agents.portfolio_agent import PaperBroker
 from agents.regime_agent import RegimeAgent, RegimeReport
 from agents.reporting_agent import ReportingAgent
@@ -170,7 +186,85 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
     return frame
 
 
-# ------------------------------------------------------------------ console report
+# ------------------------------------------------------------------ paper-options
+
+def run_paper_options(config, symbols: list[str] | None = None):
+    """Augustus -> Theo -> Joseph. Completely separate from `_run_pipeline`
+    above: its own agents, its own $1,000 ledger, no shared state with the
+    stock side at all.
+
+    Phase A4: no strategy proposes trades yet (that's Phase B), so this run
+    always calls `joseph.execute(proposals=[], ...)`. That still exercises
+    the real path end-to-end -- live chain fetch, expiration settlement on
+    any already-open position, the bucket loss-cutoff check, and ledger
+    persistence -- with zero risk, since an empty proposal list can never
+    open a position.
+    """
+    if not config.get("options.enabled", False):
+        log.warning("options.enabled is false in config -- paper-options is a "
+                   "no-op. Set options.enabled: true to turn the bucket on.")
+        return None
+
+    augustus = OptionsDataAgent(config)
+    chains = augustus.fetch_universe(symbols)
+    prices = augustus.price_lookup(chains)
+
+    theo = OptionsRiskAgent(config)
+    joseph = OptionsBroker(config, risk_agent=theo)
+    ledger = joseph.execute(proposals=[], prices=prices)
+
+    _print_options_report(chains, ledger, prices)
+    return ledger
+
+
+def _print_options_report(chains: dict, ledger, prices: dict) -> None:
+    print("\n" + "=" * 78)
+    print(f"  OPTIONS PAPER REPORT — {datetime.now():%Y-%m-%d %H:%M}")
+    print("=" * 78)
+
+    print("\n  DATA (Augustus)")
+    for symbol, chain in chains.items():
+        flag = "  ⚠ SYNTHETIC — not tradable" if chain.is_synthetic else ""
+        print(f"    {symbol:<10} {len(chain.expirations)} exp  "
+              f"{len(chain.calls):>3} calls  {len(chain.puts):>3} puts  "
+              f"source={chain.data_source:<10}{flag}")
+
+    equity = ledger.mark_to_market(prices)
+    pnl = equity - ledger.starting_capital
+    pnl_pct = (pnl / ledger.starting_capital) if ledger.starting_capital else 0.0
+    print("\n  OPTIONS LEDGER (Joseph) — separate $%.0f bucket, never blended "
+          "with the stock ledger" % ledger.starting_capital)
+    print(f"    Equity ${equity:,.2f}  (cash ${ledger.cash:,.2f})   "
+          f"P&L {pnl_pct:+.2%} (${pnl:+,.2f}) since inception   "
+          f"realized ${ledger.realized_pnl:+,.2f}   "
+          f"{len(ledger.trades)} trade(s) total")
+    if ledger.halted:
+        print(f"    ⛔ HALTED: {ledger.halt_reason} "
+              "-- clear with 'python main.py clear-halt --options'")
+    if ledger.positions:
+        for key, pos in ledger.positions.items():
+            price = prices.get(key)
+            mv = pos.market_value(price)
+            quote = "" if price is not None else "  (no live quote, marked at cost)"
+            print(f"      {pos.label:<24} x{pos.contracts}  paid ${pos.premium_paid:>8.2f}  "
+                  f"now ${mv:>8.2f}  {pos.days_held()}d held  "
+                  f"{pos.days_to_expiration()}d to exp  "
+                  f"P&L ${pos.unrealized_pnl(price):+,.2f}{quote}")
+    else:
+        print("      No open positions.")
+
+    synthetic = [s for s, c in chains.items() if c.is_synthetic]
+    if synthetic:
+        print(f"\n  ⚠ {', '.join(synthetic)} used a synthetic option chain. Not tradable "
+              "data -- price_lookup() already excluded it from `prices` above.")
+
+    print("\n  No strategy proposes trades yet (Phase B) -- this run only exercised "
+          "data fetch,\n  expiration settlement, the bucket loss-cutoff check, and "
+          "ledger persistence.")
+    print("=" * 78 + "\n")
+
+
+
 
 def _print_report(config, market, frame: pd.DataFrame, benchmarks: dict,
                   blocked: dict, risk_report: RiskReport,
@@ -338,7 +432,18 @@ def _print_ledger(market, ledger) -> None:
 
 # ------------------------------------------------------------------ killswitch / lifecycle CLI
 
-def run_killswitch(config, symbols: list[str] | None = None) -> int:
+def run_killswitch(config, symbols: list[str] | None = None, options: bool = False) -> int:
+    if options:
+        augustus = OptionsDataAgent(config)
+        try:
+            prices = augustus.price_lookup(augustus.fetch_universe(symbols))
+        except Exception as exc:  # pragma: no cover - defensive
+            log.warning("Could not fetch live option prices for killswitch (%s) -- "
+                       "flattening open positions at their entry premium instead.", exc)
+            prices = {}
+        OptionsBroker(config).killswitch(prices)
+        return 0
+
     wong = DataAgent(config)
     try:
         market = wong.fetch_universe(symbols)
@@ -351,7 +456,10 @@ def run_killswitch(config, symbols: list[str] | None = None) -> int:
     return 0
 
 
-def run_clear_halt(config) -> int:
+def run_clear_halt(config, options: bool = False) -> int:
+    if options:
+        OptionsBroker(config).clear_halt()
+        return 0
     PaperBroker(config).clear_halt()
     return 0
 
@@ -379,11 +487,14 @@ def run_bench(config, trader: str | None, trigger: str, reason: str, unbench: bo
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="main.py", description="Meridian Capital orchestrator")
-    parser.add_argument("mode", choices=["research", "paper", "live", "killswitch",
-                                         "clear-halt", "bench", "unbench"])
+    parser.add_argument("mode", choices=["research", "paper", "paper-options", "live",
+                                         "killswitch", "clear-halt", "bench", "unbench"])
     parser.add_argument("--config", default=None, help="path to config.yaml")
     parser.add_argument("--symbols", nargs="+", default=None,
                         help="override the configured universe")
+    parser.add_argument("--options", action="store_true",
+                        help="target the options bucket (Joseph) for killswitch/"
+                             "clear-halt instead of the stock bucket (Cornelius)")
     parser.add_argument("--i-understand-the-risk", action="store_true",
                         dest="risk_ack", help="required for live mode (Phase 5)")
     parser.add_argument("--trader", default=None, help="callsign for bench/unbench")
@@ -412,10 +523,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "paper":
         run_paper(config, args.symbols, post_slack=not args.no_slack)
         return 0
+    if args.mode == "paper-options":
+        run_paper_options(config, args.symbols)
+        return 0
     if args.mode == "killswitch":
-        return run_killswitch(config, args.symbols)
+        return run_killswitch(config, args.symbols, options=args.options)
     if args.mode == "clear-halt":
-        return run_clear_halt(config)
+        return run_clear_halt(config, options=args.options)
     if args.mode in ("bench", "unbench"):
         return run_bench(config, args.trader, args.trigger, args.reason,
                          unbench=(args.mode == "unbench"))
