@@ -44,7 +44,7 @@ def _clean_proposal(**overrides) -> OptionsProposal:
 
 
 def _fresh_bucket_equity() -> float:
-    return float(CONFIG.get("options.starting_capital"))
+    return float(CONFIG.get("options.bucket.starting_capital"))
 
 
 # ------------------------------------------------------------------ happy path
