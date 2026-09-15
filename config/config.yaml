@@ -148,7 +148,7 @@ regime:
   # Fraction of the last `range_window` bars that must NOT be a new
   # window-high/low for price to count as "bouncing within its range".
   range_bound_threshold: 0.70
-  # Regime-mismatch adjustments (spec §8): halve the mismatched trader's
+  # Regime-mismatch adjustments (spec §8): halve the mismatched trade's
   # risk-parity weight, and require its signal to hold for this many
   # consecutive days before the (now smaller) position is trusted.
   capital_cut: 0.5
