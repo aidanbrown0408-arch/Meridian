@@ -56,6 +56,23 @@ still succeeds. The HTML dashboard always writes to `reports/meridian_YYYYMMDD.h
 and `reports/latest.html`; the paper ledger persists to `reports/paper_ledger.json` and
 the bench state to `reports/bench_state.json` (all gitignored).
 
+### Daily options run (macOS launchd)
+
+`python main.py paper-options` can run itself every weekday at 4:15 PM local time
+(after the US close, so SPARK reads a finished daily bar):
+
+```bash
+bash scripts/install_daily_options.sh              # install / reinstall
+launchctl kickstart gui/$(id -u)/com.meridian.paper-options   # run once now
+bash scripts/install_daily_options.sh uninstall    # remove
+```
+
+The installer bakes in whichever `python3` is on your Terminal PATH (override with
+`MERIDIAN_PYTHON=/path/to/python3`). Each run appends to
+`reports/launchd_paper_options.log`. If the Mac is asleep at 4:15, launchd runs the
+missed job once on wake. Weekends are skipped; market holidays are not (the run is
+harmless: no new signal bar, just an extra equity mark).
+
 Tests: `python tests/test_phase1.py && python tests/test_phase2.py && python tests/test_phase3.py && python tests/test_phase4.py`
 (or `python -m pytest tests -q`).
 
