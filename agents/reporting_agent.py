@@ -23,6 +23,7 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from agents.compliance_agent import ComplianceReport
+from agents.dashboard_view import make_view_global
 from agents.data_agent import MarketData
 from agents.regime_agent import RegimeReport
 from agents.risk_agent import RiskReport
@@ -65,6 +66,7 @@ class ReportingAgent:
             loader=FileSystemLoader(str(TEMPLATE_DIR)),
             autoescape=select_autoescape(["html"]),
         )
+        self.env.globals["view"] = make_view_global(config)
         webhook_env_var = config.get("slack.webhook_url_env", "MERIDIAN_SLACK_WEBHOOK_URL")
         self.webhook_url = os.environ.get(webhook_env_var)
         self.post_enabled = bool(config.get("slack.post_daily_standup", True))
@@ -270,6 +272,8 @@ class ReportingAgent:
             "strategy": c.strategy, "symbol": c.symbol, "eligible": c.eligible,
             "folds_passed": c.walkforward.folds_passed, "folds_total": c.walkforward.folds_total,
             "sharpe": round(c.sharpe, 2), "max_drawdown": round(c.backtest_max_drawdown * 100, 2),
+            "cagr": (round(by_key[(c.strategy, c.symbol)].summary.cagr * 100, 1)
+                     if (c.strategy, c.symbol) in by_key else None),
             "reject_reason": c.reject_reason,
         } for c in validation_rows]
 
@@ -316,7 +320,20 @@ class ReportingAgent:
             "trader_bar_chart": self._trader_bar_chart(risk_report),
             "ledger": ledger_summary,
             "recommendation_rows": recommendation_rows,
+            # Extra inputs for the tabbed dashboard (agents/dashboard_view.py).
+            "capital_weights": {k: round(float(w), 4)
+                                for k, w in risk_report.capital_weights.items()},
+            "results_count": len(results),
+            "strategy_styles": self._strategy_styles(),
         }
+
+    def _strategy_styles(self) -> dict:
+        try:
+            from strategies.base import build_strategies
+            return {k: s.style for k, s in build_strategies(self.config).items()}
+        except Exception as exc:  # pragma: no cover - display only
+            log.debug("Strategy styles unavailable (%s)", exc)
+            return {}
 
     def _ledger_summary(self, ledger, market: dict[str, MarketData]) -> dict | None:
         """Real paper P&L, once Cornelius has actually traded -- None in

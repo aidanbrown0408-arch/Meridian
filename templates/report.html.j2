@@ -1,485 +1,684 @@
+{%- set v = view() -%}
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="60">
 <title>Meridian Capital — Daily Dashboard</title>
 <style>
-  :root {
-    --navy: #0F1C33;
-    --gold: #D4AF6A;
-    --parchment: #E8E3D3;
-    --gain: #7FBF7F;
-    --loss: #C97A7A;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    background: var(--navy);
-    color: var(--parchment);
-    font-family: Georgia, 'Times New Roman', serif;
-    padding: 32px 24px 64px;
-  }
-  h1, h2, .wordmark {
-    font-family: 'Playfair Display', Georgia, serif;
-  }
-  .wrap { max-width: 920px; margin: 0 auto; }
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#0F1C33;--navy2:#142544;--navy3:#1A3055;--gold:#D4AF6A;
+  --parch:#E8E3D3;--muted:#A8A190;--dim:#6F7891;--green:#7FBF7F;--red:#C97A7A;
+  --line:rgba(212,175,106,.16);--line2:rgba(212,175,106,.30);
+}
+html{scroll-behavior:auto}
+body{background:var(--navy);color:var(--parch);font-family:Georgia,'Times New Roman',serif;
+     -webkit-font-smoothing:antialiased;min-height:100vh}
+h1,h2,h3,.serif{font-family:'Playfair Display',Georgia,serif}
+code{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--parch);
+     background:rgba(0,0,0,.25);padding:1px 6px;border-radius:4px;white-space:nowrap}
+.up{color:var(--green)} .dn{color:var(--red)} .gld{color:var(--gold)} .mut{color:var(--muted)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
 
-  header.masthead {
-    display: flex;
-    align-items: center;
-    gap: 18px;
-    border-bottom: 1px solid var(--gold);
-    padding-bottom: 18px;
-    margin-bottom: 28px;
-  }
-  header.masthead .titles { flex: 1; }
-  .wordmark {
-    font-size: 28px;
-    letter-spacing: 4px;
-    margin: 0;
-    color: var(--parchment);
-  }
-  .tagline { margin: 4px 0 0; color: var(--gold); font-size: 13px; letter-spacing: 1px; }
-  .generated { margin: 2px 0 0; font-size: 12px; color: #9aa5bd; }
+/* ---------- header + tabs ---------- */
+.hdr{position:sticky;top:0;z-index:50;background:var(--navy);border-bottom:1px solid var(--line)}
+.hdr-top{display:flex;align-items:center;justify-content:center;gap:16px;padding:22px 20px 6px;flex-wrap:wrap}
+.hdr-top svg{width:44px;height:44px;flex:none}
+.wordmark{font-family:'Playfair Display',Georgia,serif;font-size:30px;font-weight:700;letter-spacing:5px;color:var(--parch)}
+.hdr-date{font-size:14px;color:var(--muted);letter-spacing:1px;padding-top:6px}
+.tabs{display:flex;justify-content:center;gap:4px;overflow-x:auto;scrollbar-width:none;padding:0 12px}
+.tabs::-webkit-scrollbar{display:none}
+.tab{appearance:none;background:none;border:0;border-bottom:3px solid transparent;cursor:pointer;
+     padding:16px 24px 13px;font-family:Georgia,serif;font-size:14.5px;letter-spacing:2.6px;
+     color:var(--muted);white-space:nowrap;transition:color .15s,border-color .15s;position:relative}
+.tab:hover{color:var(--parch)}
+.tab.active{color:var(--gold);border-bottom-color:var(--gold)}
+.tab .pip{position:absolute;top:12px;right:10px;width:6px;height:6px;border-radius:50%;background:var(--gold)}
+.tab:focus-visible{outline:1px solid var(--gold);outline-offset:-4px}
 
-  section { margin-bottom: 34px; }
-  h2 {
-    font-size: 15px;
-    letter-spacing: 2px;
-    text-transform: uppercase;
-    color: var(--gold);
-    border-bottom: 1px solid #2A3B5C;
-    padding-bottom: 8px;
-    margin-bottom: 14px;
-  }
+.wrap{max-width:1160px;margin:0 auto;padding:22px 24px 12px}
+.page{display:none}
+.page.active{display:block;animation:fade .18s ease-out}
+@keyframes fade{from{opacity:.4}to{opacity:1}}
+.runline{font-size:11px;color:var(--dim);margin:-6px 0 14px;letter-spacing:.3px}
 
-  .metrics-row { display: flex; gap: 16px; flex-wrap: wrap; }
-  .metric {
-    flex: 1 1 180px;
-    background: #142544;
-    border: 1px solid #2A3B5C;
-    border-radius: 6px;
-    padding: 14px 16px;
-  }
-  .metric .label { font-size: 11px; letter-spacing: 1px; color: var(--gold); text-transform: uppercase; }
-  .metric .value { font-size: 22px; margin-top: 6px; }
+/* ---------- building blocks ---------- */
+.card{background:var(--navy2);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+.eyebrow{font-size:10px;letter-spacing:1.8px;text-transform:uppercase;color:var(--gold)}
+.shdr{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+      font-size:11px;letter-spacing:1.8px;text-transform:uppercase;color:var(--gold);
+      padding-bottom:8px;margin:26px 0 10px;border-bottom:1px solid var(--line)}
+.page > .shdr:first-child{margin-top:4px}
+.grid > div > .shdr:first-child{margin-top:26px}
+.shdr .aside{font-size:10px;letter-spacing:.5px;text-transform:none;color:var(--dim)}
+.grid{display:grid;gap:14px}
+.g2{grid-template-columns:1fr 1fr}
+.g3{grid-template-columns:repeat(3,1fr)}
+.g2.wide-l{grid-template-columns:1.35fr 1fr}
+.side-r{grid-template-columns:1fr 300px;align-items:start}
+.grid > *{min-width:0}
+.empty{color:var(--muted);font-style:italic;font-size:13px;padding:6px 0}
+.note{font-size:11.5px;color:var(--dim);margin-top:8px;line-height:1.55}
 
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #24365a; }
-  th { color: var(--gold); font-weight: normal; letter-spacing: 0.5px; font-size: 11px; text-transform: uppercase; }
-  tr:last-child td { border-bottom: none; }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .pos { color: var(--gain); }
-  .neg { color: var(--loss); }
-  .pill {
-    display: inline-block;
-    padding: 1px 8px;
-    border-radius: 10px;
-    font-size: 11px;
-  }
-  .pill.blocked { background: rgba(201,122,122,0.25); color: var(--loss); }
-  .pill.trending { background: rgba(127,191,127,0.2); color: var(--gain); }
-  .pill.choppy { background: rgba(212,175,106,0.2); color: var(--gold); }
-  .pill.undecided { background: rgba(154,165,189,0.2); color: #9aa5bd; }
-  .pill.live { background: rgba(127,191,127,0.2); color: var(--gain); }
-  .pill.benched { background: rgba(154,165,189,0.2); color: #9aa5bd; }
+.bdg{display:inline-block;padding:2px 9px;border-radius:10px;font-size:10px;letter-spacing:.6px;text-transform:uppercase;white-space:nowrap}
+.bdg.live,.bdg.pass,.bdg.trending,.bdg.long{background:rgba(127,191,127,.14);color:var(--green)}
+.bdg.watch,.bdg.choppy,.bdg.paper{background:rgba(212,175,106,.14);color:var(--gold)}
+.bdg.bench,.bdg.fail,.bdg.halted,.bdg.synthetic{background:rgba(201,122,122,.15);color:var(--red)}
+.bdg.flat,.bdg.undecided,.bdg.research{background:rgba(168,161,144,.13);color:var(--muted)}
 
-  .note { font-size: 12px; color: #9aa5bd; margin-top: 8px; }
-  .warning {
-    border-left: 3px solid var(--gold);
-    background: #142544;
-    padding: 10px 14px;
-    font-size: 13px;
-    color: var(--gold);
-  }
-  .empty { color: #9aa5bd; font-style: italic; font-size: 13px; }
-  svg { width: 100%; height: auto; border-radius: 6px; border: 1px solid #2A3B5C; }
-  .masthead svg { width: 60px; height: 60px; flex: none; border: 0; border-radius: 0; }
-  .chart-grid { display: grid; grid-template-columns: 1fr; gap: 18px; }
-  footer { text-align: center; font-size: 11px; color: #5f6c8a; margin-top: 40px; }
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{font-size:9.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);font-weight:normal;
+   text-align:left;padding:8px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+tr.click{cursor:pointer}
+tr.click:hover td{background:var(--navy3)}
+.tcard{padding:4px 8px}
+
+/* ---------- overview ---------- */
+.acct{position:relative;overflow:hidden;display:flex;flex-direction:column}
+.acct .top{display:flex;justify-content:space-between;align-items:center}
+.acct .val{font-family:'Playfair Display',Georgia,serif;font-size:36px;margin:10px 0 2px;font-variant-numeric:tabular-nums}
+.acct .pnl{font-size:14px;font-variant-numeric:tabular-nums}
+.acct .pnl .pct{color:var(--muted);margin-left:6px}
+.acct dl{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.acct dt{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--dim)}
+.acct dd{font-size:13px;margin-top:3px;font-variant-numeric:tabular-nums}
+.acct.halted{border-color:rgba(201,122,122,.6)}
+.acct .foot{font-size:11px;color:var(--dim);margin-top:auto;padding-top:14px;line-height:1.5}
+.acct.none{display:flex;flex-direction:column;justify-content:center}
+
+.stats{display:grid;grid-template-rows:repeat(3,1fr);gap:10px}
+.stat{padding:11px 14px;display:flex;flex-direction:column;justify-content:center}
+.stat .v{font-size:19px;margin-top:3px;font-variant-numeric:tabular-nums}
+.stat .s{font-size:10.5px;color:var(--dim);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-top{grid-template-columns:1fr 1fr 280px}
+
+.chart svg{width:100%;height:auto;display:block;border-radius:6px}
+.alerts{display:flex;flex-direction:column;gap:8px}
+.alert{border-left:3px solid var(--gold);background:rgba(0,0,0,.18);border-radius:0 8px 8px 0;padding:9px 12px}
+.alert.halt{border-left-color:var(--red);background:rgba(201,122,122,.10)}
+.alert.ask{border-left-color:var(--muted)}
+.alert .t{font-size:13px;color:var(--parch)}
+.alert.warn .t{color:var(--gold)}
+.alert.halt .t{color:var(--red)}
+.alert .who{font-size:11px;color:var(--gold);letter-spacing:.8px;margin-top:2px}
+.alert .b{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.5}
+.alert .c{margin-top:5px}
+.quiet{font-size:13px;color:var(--green);padding:6px 0}
+.sigs{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.sig{display:flex;align-items:center;gap:8px;background:rgba(0,0,0,.18);border-radius:8px;padding:7px 10px;font-size:12.5px}
+
+/* ---------- caps ---------- */
+.cap{margin-bottom:12px}
+.cap:last-child{margin-bottom:0}
+.cap .l{display:flex;justify-content:space-between;font-size:11.5px;margin-bottom:5px}
+.cap .l span:last-child{color:var(--muted);font-variant-numeric:tabular-nums}
+.bar{height:6px;background:rgba(0,0,0,.3);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--green);border-radius:3px}
+.bar i.warn{background:var(--gold)} .bar i.dn{background:var(--red)}
+
+/* ---------- agents ---------- */
+.agrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+.acard{display:flex;flex-direction:column}
+.acard .n{font-size:15px;font-family:'Playfair Display',Georgia,serif}
+.acard .r{font-size:9.5px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold);margin-left:6px}
+.acard .m{font-size:12.5px;line-height:1.6;margin:8px 0 10px;flex:1}
+.st{display:flex;align-items:center;gap:6px;font-size:10.5px;color:var(--muted)}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex:none}
+.dot.warn{background:var(--gold)} .dot.bad{background:var(--red)} .dot.off{background:var(--dim)}
+
+/* ---------- the floor ---------- */
+.roster{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+@media (max-width:1000px){.roster{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}}
+.rcard{text-align:center;padding:20px 16px 18px}
+.portrait{width:92px;height:92px;border-radius:50%;object-fit:cover;border:1px solid var(--gold);
+          display:block;margin:0 auto 12px;background:var(--navy)}
+.mono{display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',Georgia,serif;
+      font-size:38px;color:var(--gold);background:radial-gradient(circle at 50% 35%,#1f3a66,var(--navy) 70%)}
+.rcard .rn{font-family:'Playfair Display',Georgia,serif;font-size:17px;letter-spacing:1px}
+.rcard .rr{font-size:9.5px;letter-spacing:1.6px;text-transform:uppercase;color:var(--gold);margin:5px 0 8px}
+.rcard .st{justify-content:center;margin-bottom:10px}
+.rcard .rd{font-size:11.5px;line-height:1.6;color:var(--muted);text-align:left}
+.desk-sub{font-size:11.5px;color:var(--dim);margin:-4px 0 12px}
+
+/* ---------- modal ---------- */
+.overlay{position:fixed;inset:0;background:rgba(5,10,20,.72);display:none;align-items:flex-start;
+         justify-content:center;z-index:200;padding:60px 16px;overflow-y:auto}
+.overlay.open{display:flex}
+.modal{background:var(--navy);border:1px solid var(--line2);border-radius:12px;width:100%;max-width:520px}
+.mhdr{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start}
+.mtitle{font-family:'Playfair Display',Georgia,serif;font-size:22px;color:var(--gold);letter-spacing:1px}
+.msub{font-size:11.5px;color:var(--muted);margin-top:2px}
+.mbtn{background:none;border:1px solid var(--line2);color:var(--muted);border-radius:6px;padding:2px 10px;cursor:pointer;font-size:16px}
+.mbtn:hover{color:var(--parch)}
+.mbody{padding:16px 20px 20px}
+.kv{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--line);font-size:12.5px}
+.kv:last-child{border-bottom:0}
+.kv span:first-child{color:var(--muted)}
+.mnote{font-size:12px;line-height:1.6;margin-top:14px;padding:10px 12px;background:var(--navy2);border-radius:8px}
+
+footer{text-align:center;font-size:11px;color:var(--dim);padding:28px 0 36px}
+
+@media (max-width:900px){
+  .row-top{grid-template-columns:1fr 1fr}
+  .row-top .stats{grid-column:1/-1;grid-template-rows:none;grid-template-columns:repeat(3,1fr)}
+  .g3{grid-template-columns:1fr 1fr}
+}
+@media (max-width:640px){
+  .wrap{padding:16px}
+  .row-top,.g2,.g3,.g2.wide-l,.side-r{grid-template-columns:1fr}
+  .row-top .stats{grid-template-columns:1fr}
+  .wordmark{font-size:21px;letter-spacing:3px}
+  .hdr-top svg{width:32px;height:32px}
+  .tabs{justify-content:flex-start}
+  .tab{padding:13px 12px 11px;font-size:11px;letter-spacing:1.5px}
+  .tcard{overflow-x:auto}
+}
 </style>
 </head>
 <body>
-<div class="wrap">
 
-  <header class="masthead">
-    <svg viewBox="0 0 60 60" width="60" height="60" aria-label="Meridian Capital compass rose">
-      <circle cx="30" cy="30" r="26" fill="none" stroke="#D4AF6A" stroke-width="1.5"/>
-      <circle cx="30" cy="30" r="18" fill="none" stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="30" y1="6"  x2="30" y2="54" stroke="#D4AF6A" stroke-width="0.75"/>
-      <line x1="6"  y1="30" x2="54" y2="30" stroke="#D4AF6A" stroke-width="0.75"/>
-      <line x1="48.38" y1="11.62" x2="51.21" y2="8.79"  stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="48.38" y1="48.38" x2="51.21" y2="51.21" stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="11.62" y1="48.38" x2="8.79"  y2="51.21" stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="11.62" y1="11.62" x2="8.79"  y2="8.79"  stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="30" y1="4"  x2="30" y2="0"  stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="30" y1="56" x2="30" y2="60" stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="56" y1="30" x2="60" y2="30" stroke="#D4AF6A" stroke-width="1"/>
-      <line x1="4"  y1="30" x2="0"  y2="30" stroke="#D4AF6A" stroke-width="1"/>
-      <polygon points="30,10 27,30 33,30" fill="#D4AF6A"/>
-      <polygon points="30,50 27,30 33,30" fill="none" stroke="#D4AF6A" stroke-width="1"/>
-      <circle cx="30" cy="30" r="2" fill="#D4AF6A"/>
+<header class="hdr">
+  <div class="hdr-top">
+    <svg viewBox="0 0 88 88" aria-label="Meridian Capital compass rose">
+      <circle cx="44" cy="44" r="38" fill="none" stroke="#D4AF6A" stroke-width="1.5"/>
+      <circle cx="44" cy="44" r="31" fill="none" stroke="#D4AF6A" stroke-width="0.5" opacity="0.5"/>
+      <line x1="44" y1="6" x2="44" y2="82" stroke="#D4AF6A" stroke-width="0.6" opacity="0.5"/>
+      <line x1="6" y1="44" x2="82" y2="44" stroke="#D4AF6A" stroke-width="0.6" opacity="0.5"/>
+      <g stroke="#D4AF6A" stroke-width="1.2" opacity="0.7"><line x1="44" y1="6" x2="44" y2="13"/><line x1="44" y1="75" x2="44" y2="82"/><line x1="6" y1="44" x2="13" y2="44"/><line x1="75" y1="44" x2="82" y2="44"/></g>
+      <g stroke="#D4AF6A" stroke-width="0.8" opacity="0.5"><line x1="17.1" y1="17.1" x2="20.6" y2="20.6"/><line x1="70.9" y1="17.1" x2="67.4" y2="20.6"/><line x1="17.1" y1="70.9" x2="20.6" y2="67.4"/><line x1="70.9" y1="70.9" x2="67.4" y2="67.4"/></g>
+      <path d="M44 14 L52 44 L44 73 L36 44 Z" fill="none" stroke="#D4AF6A" stroke-width="1"/>
+      <path d="M44 14 L52 44 L44 44 Z" fill="#D4AF6A"/>
+      <path d="M44 14 L36 44 L44 44 Z" fill="#D4AF6A" opacity="0.55"/>
+      <circle cx="44" cy="44" r="3" fill="#0F1C33" stroke="#D4AF6A" stroke-width="1"/>
     </svg>
-    <div class="titles">
-      <p class="wordmark">MERIDIAN CAPITAL</p>
-      <p class="tagline">multi-agent trading research desk</p>
-      <p class="generated">{{ generated_at }}</p>
-      {% if stock_note %}<p class="generated">{{ stock_note }}</p>{% endif %}
-    </div>
-  </header>
+    <span class="wordmark">MERIDIAN CAPITAL</span>
+    <span class="hdr-date">{{ v.hdr_date }}</span>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab" role="tab" data-tab="overview">OVERVIEW{% if v.alerts %}<span class="pip" title="{{ v.alerts|length }} item(s) need a look"></span>{% endif %}</button>
+    <button class="tab" role="tab" data-tab="strategies">STRATEGIES</button>
+    <button class="tab" role="tab" data-tab="trades">TRADES</button>
+    <button class="tab" role="tab" data-tab="agents">AGENTS</button>
+    <button class="tab" role="tab" data-tab="detail">DETAIL</button>
+    <button class="tab" role="tab" data-tab="floor">THE FLOOR</button>
+  </nav>
+</header>
 
-  <section>
-    <h2>Key Metrics</h2>
-    <div class="metrics-row">
-      {% if ledger %}
-      <div class="metric">
-        <div class="label">Paper Portfolio Value</div>
-        <div class="value">${{ "{:,.0f}".format(ledger.equity) }}</div>
-      </div>
-      <div class="metric">
-        <div class="label">P&amp;L Since Inception</div>
-        <div class="value {{ 'pos' if ledger.total_pnl >= 0 else 'neg' }}">
-          {{ "%+.1f"|format(ledger.total_pnl_pct) }}%
+<main class="wrap">
+{% if stock_note or v.opt %}
+<p class="runline">
+  {%- if stock_note %}{{ stock_note }}{% elif generated_at %}Stock run: {{ generated_at }}.{% endif %}
+  {%- if v.opt %} &nbsp;·&nbsp; Options run: {{ v.opt.updated }}.{% endif %}
+  &nbsp;·&nbsp; Auto-refreshes every 60s.
+</p>
+{% endif %}
+
+<!-- ======================= OVERVIEW ======================= -->
+<section id="p-overview" class="page" role="tabpanel">
+  <div class="grid row-top">
+    <div class="card acct{{ ' halted' if v.stock.halted }}">
+      <div class="top"><span class="eyebrow">Stock account · Cornelius</span>
+        <span class="bdg {{ v.stock.status|lower }}">{{ v.stock.status }}</span></div>
+      <div class="val">{{ v.stock.value }}</div>
+      <div class="pnl"><span class="{{ v.stock.cls }}">{{ v.stock.pnl }}</span><span class="pct">{{ v.stock.pnl_pct }} since inception</span></div>
+      <dl>{% for k, val in v.stock.rows %}<div><dt>{{ k }}</dt><dd>{{ val }}</dd></div>{% endfor %}</dl>
+      <div class="foot">{{ v.stock.foot }}</div>
+    </div>
+
+    {% if v.opt %}
+    <div class="card acct{{ ' halted' if v.opt.halted }}">
+      <div class="top"><span class="eyebrow">Options account · Joseph</span>
+        <span class="bdg {{ v.opt.status|lower }}">{{ v.opt.status }}</span></div>
+      <div class="val">{{ v.opt.value }}</div>
+      <div class="pnl"><span class="{{ v.opt.cls }}">{{ v.opt.pnl }}</span><span class="pct">{{ v.opt.pnl_pct }} since inception</span></div>
+      <dl>{% for k, val in v.opt.rows %}<div><dt>{{ k }}</dt><dd>{{ val }}</dd></div>{% endfor %}</dl>
+      <div class="foot">{{ v.opt.foot }}</div>
+    </div>
+    {% else %}
+    <div class="card acct none">
+      <span class="eyebrow">Options account</span>
+      <p class="empty" style="margin-top:8px">No options run yet. Start with <code>python main.py paper-options</code>.</p>
+    </div>
+    {% endif %}
+
+    <div class="stats">
+      {% for s in v.stats %}
+      <div class="card stat"><span class="eyebrow">{{ s.label }}</span>
+        <span class="v {{ s.cls }}">{{ s.value }}</span><span class="s" title="{{ s.sub }}">{{ s.sub }}</span></div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="grid g2 wide-l" style="margin-top:14px">
+    <div class="card chart">
+      <div class="shdr" style="margin-top:0">Equity curve <span class="aside">backtest, in-sample</span></div>
+      {% if v.charts.equity_chart %}{{ v.charts.equity_chart|safe }}{% else %}<p class="empty">No backtest curve yet.</p>{% endif %}
+    </div>
+    <div class="card">
+      <div class="shdr" style="margin-top:0">Needs a look <span class="aside">{{ v.alerts|length }} item(s)</span></div>
+      <div class="alerts">
+        {% for a in v.alerts %}
+        <div class="alert {{ a.level }}">
+          <div class="t">{{ a.title }}</div>
+          {% if a.who %}<div class="who">{{ a.who }}</div>{% endif %}
+          <div class="b">{{ a.body }}</div>
+          {% if a.cmd %}<div class="c"><code>{{ a.cmd }}</code></div>{% endif %}
         </div>
+        {% else %}
+        <p class="quiet">All quiet. Nothing needs your approval.</p>
+        {% endfor %}
       </div>
-      {% else %}
-      <div class="metric">
-        <div class="label">Starting Paper Capital</div>
-        <div class="value">${{ "{:,.0f}".format(starting_capital) }}</div>
-      </div>
-      <div class="metric">
-        <div class="label">Live Traders</div>
-        <div class="value">{{ live_traders|length }} / {{ (live_traders|length) + (benched_traders|length) }}</div>
+      {% if v.signals %}
+      <div class="shdr">Options trigger today <span class="aside">{{ v.signals[0].trigger }}</span></div>
+      <div class="sigs">
+        {% for s in v.signals %}
+        <div class="sig">{{ s.underlying }} <span class="bdg {{ 'long' if s.signal_long else 'flat' }}">{{ 'long' if s.signal_long else 'flat' }}</span></div>
+        {% endfor %}
       </div>
       {% endif %}
-      <div class="metric">
-        <div class="label">vs. SPY Buy-and-Hold</div>
-        {% set spy = benchmark_rows|selectattr("symbol", "equalto", "SPY")|list %}
-        <div class="value {{ 'pos' if spy and spy[0].cagr >= 0 else 'neg' }}">
-          {{ "%.2f"|format(spy[0].cagr) if spy else "n/a" }}%
-        </div>
-      </div>
     </div>
-    {% if ledger %}
-    <p class="note">Live paper P&amp;L from the persisted ledger
-      ({{ ledger.trade_count }} trade(s) since inception).
-      {% if ledger.halted %}⛔ HALTED: {{ ledger.halt_reason }} — clear with
-      <code>python main.py clear-halt</code> before this account trades again.{% endif %}</p>
-    {% else %}
-    <p class="note">No live P&amp;L yet — paper trading begins with <code>python main.py paper</code>.
-      Metrics above describe today's research run, not a funded account.</p>
-    {% endif %}
-  </section>
+  </div>
+</section>
 
-  {% if synthetic_symbols %}
-  <section>
-    <div class="warning">⚠ {{ synthetic_symbols|join(', ') }} used synthetic data today. Every
-      number touching {{ synthetic_symbols|join(', ') }} describes a random walk, not a market —
-      do not act on it.</div>
-  </section>
+<!-- ======================= STRATEGIES ======================= -->
+<section id="p-strategies" class="page" role="tabpanel">
+  <div class="shdr">Stock traders <span class="aside">click a row for per-symbol detail</span></div>
+  <div class="card tcard">
+  <table>
+    <thead><tr><th>Callsign</th><th>Style</th><th>Status</th><th>Best on</th><th class="num">Sharpe</th>
+      <th class="num">CAGR</th><th class="num">Max DD</th><th class="num">W/F folds</th><th class="num">Symbols passed</th><th class="num">Size</th></tr></thead>
+    <tbody>
+    {% for r in v.strategy_rows %}
+      <tr class="click" data-strat="{{ r.callsign }}" tabindex="0">
+        <td><b class="gld">{{ r.callsign }}</b></td>
+        <td class="mut">{{ r.style }}</td>
+        <td><span class="bdg {{ r.status }}">{{ r.status }}</span></td>
+        <td>{{ r.symbol }}</td>
+        <td class="num">{{ r.sharpe if r.sharpe is not none else '—' }}</td>
+        <td class="num {{ 'up' if r.cagr is not none and r.cagr >= 0 else 'dn' }}">{{ '%.1f%%'|format(r.cagr) if r.cagr is not none else '—' }}</td>
+        <td class="num">{{ '%.1f%%'|format(r.max_drawdown) if r.max_drawdown is not none else '—' }}</td>
+        <td class="num">{{ r.walkforward }}</td>
+        <td class="num">{{ r.symbols_passed }}</td>
+        <td class="num">{{ '%.1f%%'|format(r.position_pct) if r.position_pct is not none else '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  {% if options %}
+  <div class="shdr">Options strategy <span class="aside">rides a stock trader's signal</span></div>
+  <div class="card tcard">
+  <table>
+    <tr><th>Strategy</th><th>Trigger</th><th>Instrument</th><th>Underlying</th><th>Today</th><th>Detail</th></tr>
+    {% for s in v.signals %}
+    <tr>
+      {% if loop.first %}<td rowspan="{{ v.signals|length }}"><b class="gld">SPARK-calls</b></td>
+      <td rowspan="{{ v.signals|length }}">{{ s.trigger }} long</td>
+      <td rowspan="{{ v.signals|length }}" class="mut">Near-the-money long call</td>{% endif %}
+      <td>{{ s.underlying }}</td>
+      <td><span class="bdg {{ 'long' if s.signal_long else 'flat' }}">{{ 'long' if s.signal_long else 'flat' }}</span></td>
+      <td class="mut">{{ s.detail }}</td>
+    </tr>
+    {% else %}
+    <tr><td><b class="gld">SPARK-calls</b></td><td colspan="5" class="mut">No signal check on the last run.</td></tr>
+    {% endfor %}
+  </table>
+  </div>
   {% endif %}
 
-  {% if recommendation_rows %}
-  <section>
-    <h2>Lifecycle — Important Inquiry (Charles + George)</h2>
-    <table>
-      <tr><th>Trader</th><th>Trigger</th><th>Recommendation</th><th>Detail</th></tr>
-      {% for row in recommendation_rows %}
-      <tr>
-        <td>{{ row.trader }}</td>
-        <td>{{ row.trigger.replace('_', ' ') }}</td>
-        <td><span class="pill blocked">{{ row.action }}</span></td>
-        <td>{{ row.detail }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    <p class="note">Recommendation only — nothing is benched without the operator's explicit
-      approval (<code>python main.py bench --trader X --trigger ...</code>).</p>
-  </section>
-  {% endif %}
+  <div class="grid g2">
+    <div>
+      <div class="shdr">Target allocation <span class="aside">post-regime</span></div>
+      {% if target_rows %}
+      <div class="card tcard"><table>
+        <tr><th>Ticker</th><th class="num">Target %</th><th class="num">Target $</th><th>Contributors</th><th></th></tr>
+        {% for row in target_rows %}
+        <tr><td>{{ row.symbol }}</td><td class="num">{{ "%.1f"|format(row.target_pct) }}%</td>
+          <td class="num">${{ "{:,.0f}".format(row.target_dollars) }}</td><td>{{ row.contributors }}</td>
+          <td>{% if row.capped %}<span class="bdg bench">capped</span>{% endif %}</td></tr>
+        {% endfor %}
+      </table></div>
+      {% else %}
+      <p class="empty">No traders live today, so no target positions.</p>
+      {% endif %}
+    </div>
+    <div>
+      <div class="shdr">Buy-and-hold benchmark</div>
+      <div class="card tcard"><table>
+        <tr><th>Symbol</th><th class="num">Sharpe</th><th class="num">CAGR</th><th class="num">Max DD</th></tr>
+        {% for row in benchmark_rows %}
+        <tr><td>{{ row.symbol }}</td><td class="num">{{ row.sharpe }}</td>
+          <td class="num {{ 'up' if row.cagr >= 0 else 'dn' }}">{{ row.cagr }}%</td>
+          <td class="num">{{ row.max_drawdown }}%</td></tr>
+        {% else %}
+        <tr><td colspan="4" class="empty">No benchmark yet.</td></tr>
+        {% endfor %}
+      </table></div>
+    </div>
+  </div>
 
-  {% if ledger %}
-  <section>
-    <h2>Paper Ledger (Cornelius)</h2>
-    {% if ledger.positions %}
-    <table>
-      <tr><th>Ticker</th><th class="num">Shares</th><th class="num">Entry</th>
-          <th class="num">Price</th><th class="num">Days Held</th>
-          <th class="num">Market Value</th><th class="num">Unrealized P&amp;L</th></tr>
-      {% for row in ledger.positions %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        <td class="num">{{ row.shares }}</td>
-        <td class="num">${{ row.entry_price }}</td>
-        <td class="num">${{ row.price }}</td>
-        <td class="num">{{ row.days_held }}</td>
-        <td class="num">${{ "{:,.0f}".format(row.market_value) }}</td>
-        <td class="num {{ 'pos' if row.unrealized_pnl >= 0 else 'neg' }}">
-          {{ "{:+,.0f}".format(row.unrealized_pnl) }}
-        </td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p class="empty">No open positions. Cash: ${{ "{:,.0f}".format(ledger.cash) }}</p>
-    {% endif %}
-  </section>
+  {% if live_traders %}
+  <p class="note">Live today: {% for t in live_traders %}<span class="bdg live">{{ t }}</span> {% endfor %}</p>
+  {% endif %}
+</section>
+
+<!-- ======================= TRADES ======================= -->
+<section id="p-trades" class="page" role="tabpanel">
+  <div class="shdr">Stock positions <span class="aside">Cornelius · $5k paper ledger</span></div>
+  {% if ledger and ledger.halted %}
+  <div class="alert halt" style="margin-bottom:10px"><div class="t">Halted: {{ ledger.halt_reason }}</div>
+    <div class="c"><code>python main.py clear-halt</code></div></div>
+  {% endif %}
+  {% if ledger and ledger.positions %}
+  <div class="card tcard"><table>
+    <tr><th>Ticker</th><th class="num">Shares</th><th class="num">Entry</th><th class="num">Price</th>
+        <th class="num">Days held</th><th class="num">Market value</th><th class="num">Unrealized P&amp;L</th></tr>
+    {% for row in ledger.positions %}
+    <tr><td><b>{{ row.symbol }}</b></td><td class="num">{{ row.shares }}</td>
+      <td class="num">${{ row.entry_price }}</td><td class="num">${{ row.price }}</td>
+      <td class="num">{{ row.days_held }}</td>
+      <td class="num">${{ "{:,.0f}".format(row.market_value) }}</td>
+      <td class="num {{ 'up' if row.unrealized_pnl >= 0 else 'dn' }}">{{ "{:+,.0f}".format(row.unrealized_pnl) }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% elif ledger %}
+  <p class="empty">No open stock positions. Cash ${{ "{:,.0f}".format(ledger.cash) }}.</p>
+  {% else %}
+  <p class="empty">Paper trading hasn't started. Run <code>python main.py paper</code>.</p>
   {% endif %}
 
   {% if options %}
-  <section>
-    <h2>Options Bucket (Augustus · Theo · Joseph)</h2>
-    <div class="metrics-row">
-      <div class="metric">
-        <div class="label">Bucket Value</div>
-        <div class="value">${{ "{:,.2f}".format(options.equity) }}</div>
-      </div>
-      <div class="metric">
-        <div class="label">P&amp;L Since Inception</div>
-        <div class="value {{ 'pos' if options.total_pnl >= 0 else 'neg' }}">
-          {{ "%+.1f"|format(options.total_pnl_pct) }}%
-          <span style="font-size:13px;">({{ "{:+,.2f}".format(options.total_pnl) }})</span>
-        </div>
-      </div>
-      <div class="metric">
-        <div class="label">Cash / Premium at Risk</div>
-        <div class="value">${{ "{:,.0f}".format(options.cash) }} / ${{ "{:,.0f}".format(options.open_premium) }}</div>
-      </div>
+  <div class="shdr">Options Bucket (Augustus · Theo · Joseph) <span class="aside">separate ${{ "{:,.0f}".format(options.starting_capital) }} ledger, never blended</span></div>
+  {% if options.halted %}
+  <div class="alert halt" style="margin-bottom:10px"><div class="t">Options halted: {{ options.halt_reason }}</div>
+    <div class="c"><code>python main.py clear-halt --options</code></div></div>
+  {% endif %}
+  <div class="grid side-r">
+    <div>
+      {% if options.positions %}
+      <div class="card tcard"><table>
+        <tr><th>Contract</th><th class="num">Qty</th><th class="num">Paid</th><th class="num">Now</th>
+            <th class="num">P&amp;L</th><th class="num">Held</th><th class="num">To exp</th></tr>
+        {% for row in options.positions %}
+        <tr><td><b>{{ row.label }}</b>{% if not row.quoted %} <span class="bdg flat">at cost</span>{% endif %}</td>
+          <td class="num">{{ row.contracts }}</td>
+          <td class="num">${{ "{:,.2f}".format(row.premium_paid) }}</td>
+          <td class="num">${{ "{:,.2f}".format(row.value) }}</td>
+          <td class="num {{ 'up' if row.pnl >= 0 else 'dn' }}">{{ "{:+,.2f}".format(row.pnl) }}</td>
+          <td class="num">{{ row.days_held }}d</td>
+          <td class="num {{ 'dn' if row.days_to_exp <= 3 }}">{{ row.days_to_exp }}d</td></tr>
+        {% endfor %}
+      </table></div>
+      {% else %}
+      <div class="card"><p class="empty">No open option positions. Joseph opens one when SPARK signals long and Theo approves it.</p></div>
+      {% endif %}
     </div>
-    <p class="note">Separate ${{ "{:,.0f}".format(options.starting_capital) }} bucket — never blended
-      with the stock ledger. Last options run: {{ options.updated_at }}.
-      {{ options.trade_count }} trade(s), realized {{ "{:+,.2f}".format(options.realized_pnl) }}.
-      {% if options.halt_floor is not none %}Halts at ${{ "{:,.0f}".format(options.halt_floor) }}.{% endif %}</p>
-    {% if options.halted %}
-    <div class="warning">⛔ OPTIONS HALTED: {{ options.halt_reason }} — clear with
-      <code>python main.py clear-halt --options</code>.</div>
-    {% endif %}
-
-    {% if options.signals %}
-    <p style="margin-top:16px;"><strong>Today's signal ({{ options.signals[0].trigger }}):</strong></p>
-    <table>
-      <tr><th>Underlying</th><th></th><th>Detail</th></tr>
-      {% for s in options.signals %}
-      <tr>
-        <td>{{ s.underlying }}</td>
-        <td>{% if s.signal_long %}<span class="pill live">long</span>{% else %}<span class="pill benched">flat</span>{% endif %}</td>
-        <td>{{ s.detail }}</td>
-      </tr>
+    <div class="card">
+      <div class="eyebrow" style="margin-bottom:12px">Theo's caps</div>
+      {% for cap in v.caps %}
+      <div class="cap"><div class="l"><span>{{ cap.label }}</span><span>{{ cap.text }}</span></div>
+        <div class="bar"><i class="{{ cap.level }}" style="width:{{ [cap.pct, 1.5]|max }}%"></i></div></div>
       {% endfor %}
-    </table>
-    {% endif %}
-
-    <p style="margin-top:16px;"><strong>Open positions:</strong></p>
-    {% if options.positions %}
-    <table>
-      <tr><th>Contract</th><th class="num">Qty</th><th class="num">Paid</th><th class="num">Now</th>
-          <th class="num">P&amp;L</th><th class="num">Held</th><th class="num">To Exp</th></tr>
-      {% for row in options.positions %}
-      <tr>
-        <td>{{ row.label }}{% if not row.quoted %} <span class="pill undecided">at cost</span>{% endif %}</td>
-        <td class="num">{{ row.contracts }}</td>
-        <td class="num">${{ "{:,.2f}".format(row.premium_paid) }}</td>
-        <td class="num">${{ "{:,.2f}".format(row.value) }}</td>
-        <td class="num {{ 'pos' if row.pnl >= 0 else 'neg' }}">{{ "{:+,.2f}".format(row.pnl) }}</td>
-        <td class="num">{{ row.days_held }}d</td>
-        <td class="num">{{ row.days_to_exp }}d</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p class="empty">No open option positions.</p>
-    {% endif %}
-
-    {% if options.recent_trades %}
-    <p style="margin-top:16px;"><strong>Recent trades:</strong></p>
-    <table>
-      <tr><th>Date</th><th>Side</th><th>Contract</th><th class="num">Qty</th>
-          <th class="num">Premium</th><th class="num">Realized</th><th>Reason</th></tr>
-      {% for t in options.recent_trades %}
-      <tr>
-        <td>{{ t.date }}</td><td>{{ t.side }}</td><td>{{ t.label }}</td>
-        <td class="num">{{ t.contracts }}</td>
-        <td class="num">${{ "{:,.2f}".format(t.premium) }}</td>
-        <td class="num {{ 'pos' if t.realized_pnl >= 0 else 'neg' }}">{{ "{:+,.2f}".format(t.realized_pnl) }}</td>
-        <td>{{ t.reason }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% endif %}
-
-    {% if options.chains %}
-    <p style="margin-top:16px;"><strong>Option chains (Augustus):</strong></p>
-    <table>
-      <tr><th>Underlying</th><th class="num">Expirations</th><th class="num">Calls</th>
-          <th class="num">Puts</th><th>Source</th><th></th></tr>
-      {% for c in options.chains %}
-      <tr>
-        <td>{{ c.underlying }}</td><td class="num">{{ c.expirations }}</td>
-        <td class="num">{{ c.calls }}</td><td class="num">{{ c.puts }}</td>
-        <td>{{ c.source }}</td>
-        <td>{% if c.synthetic %}<span class="pill blocked">synthetic</span>{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% endif %}
-
-    {% if options.equity_chart %}
-    <div class="chart-grid" style="margin-top:16px;">{{ options.equity_chart }}</div>
-    {% endif %}
-  </section>
+    </div>
+  </div>
   {% endif %}
 
-  <section>
-    <h2>Target Allocation (post-regime)</h2>
-    {% if target_rows %}
-    <table>
-      <tr><th>Ticker</th><th class="num">Target %</th><th class="num">Target $</th><th>Contributors</th><th></th></tr>
-      {% for row in target_rows %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        <td class="num">{{ "%.1f"|format(row.target_pct) }}%</td>
-        <td class="num">${{ "{:,.0f}".format(row.target_dollars) }}</td>
-        <td>{{ row.contributors }}</td>
-        <td>{% if row.capped %}<span class="pill blocked">capped</span>{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% else %}
-    <p class="empty">No traders live today — no target positions. This is deliberate: no
-      delivery is worse than a delivery of "nothing today."</p>
-    {% endif %}
-  </section>
+  <div class="shdr">Recent trades</div>
+  {% if options and options.recent_trades %}
+  <div class="card tcard"><table>
+    <tr><th>Date</th><th>Book</th><th>Side</th><th>Contract</th><th class="num">Qty</th>
+        <th class="num">Premium</th><th class="num">Realized</th><th>Reason</th></tr>
+    {% for t in options.recent_trades %}
+    <tr><td>{{ t.date }}</td><td class="mut">Options</td><td><span class="bdg {{ 'live' if t.side|lower in ('buy','open') else 'watch' }}">{{ t.side }}</span></td>
+      <td>{{ t.label }}</td><td class="num">{{ t.contracts }}</td>
+      <td class="num">${{ "{:,.2f}".format(t.premium) }}</td>
+      <td class="num {{ 'up' if t.realized_pnl >= 0 else 'dn' }}">{{ "{:+,.2f}".format(t.realized_pnl) }}</td>
+      <td class="mut">{{ t.reason }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}
+  <p class="empty">No trades yet{% if ledger %} ({{ ledger.trade_count }} stock trade(s) on record){% endif %}.</p>
+  {% endif %}
+</section>
 
-  <section>
-    <h2>Charts</h2>
-    <div class="chart-grid">
-      {{ equity_chart }}
-      {{ drawdown_chart }}
-      {{ trader_bar_chart }}
+<!-- ======================= AGENTS ======================= -->
+<section id="p-agents" class="page" role="tabpanel">
+  <div class="shdr">Stock desk <span class="aside">today's standup</span></div>
+  <div class="agrid">
+    {% for a in v.stock_desk %}
+    <div class="card acard">
+      <div><span class="n">{{ a.name }}</span><span class="r">{{ a.role }}</span></div>
+      <div class="m">{{ a.message }}</div>
+      <div class="st"><span class="dot {{ a.level }}"></span>{{ a.status_text }}</div>
     </div>
-  </section>
+    {% endfor %}
+  </div>
+  <div class="shdr">Options desk <span class="aside">{{ 'last paper-options run' if options else 'not run yet' }}</span></div>
+  {% if v.options_desk %}
+  <div class="agrid">
+    {% for a in v.options_desk %}
+    <div class="card acard">
+      <div><span class="n">{{ a.name }}</span><span class="r">{{ a.role }}</span></div>
+      <div class="m">{{ a.message }}</div>
+      <div class="st"><span class="dot {{ a.level }}"></span>{{ a.status_text }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">Augustus, Theo and Joseph report here after <code>python main.py paper-options</code>.</p>
+  {% endif %}
+</section>
 
-  <section>
-    <h2>Data (Wong)</h2>
-    <table>
-      <tr><th>Symbol</th><th class="num">Bars</th><th>Source</th><th>Last</th><th></th></tr>
-      {% for row in data_rows %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        <td class="num">{{ row.bars }}</td>
-        <td>{{ row.source }}</td>
-        <td>{{ row.last_date }}</td>
-        <td>{% if row.synthetic %}<span class="pill blocked">synthetic</span>{% endif %}</td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
+<!-- ======================= DETAIL ======================= -->
+<section id="p-detail" class="page" role="tabpanel">
+  {% if v.charts.drawdown_chart or v.charts.trader_bar_chart or v.options_chart %}
+  <div class="grid g2">
+    {% if v.charts.drawdown_chart %}<div class="card chart">{{ v.charts.drawdown_chart|safe }}</div>{% endif %}
+    {% if v.charts.trader_bar_chart %}<div class="card chart">{{ v.charts.trader_bar_chart|safe }}</div>{% endif %}
+    {% if v.options_chart %}<div class="card chart">{{ v.options_chart|safe }}</div>{% endif %}
+  </div>
+  {% endif %}
+  {% set missing = [] %}
+  {% if not v.charts.drawdown_chart %}{% set _ = missing.append('drawdown') %}{% endif %}
+  {% if not v.charts.trader_bar_chart %}{% set _ = missing.append('live-trader Sharpe') %}{% endif %}
+  {% if not v.options_chart %}{% set _ = missing.append('options equity (needs 2+ days)') %}{% endif %}
+  {% if missing %}<p class="note">No chart yet for: {{ missing|join(', ') }}.</p>{% endif %}
 
-  <section>
-    <h2>Compliance (David)</h2>
-    {% if compliance_rows %}
-    <table>
-      <tr><th>Symbol</th><th>Reason</th></tr>
-      {% for row in compliance_rows %}
-      <tr><td>{{ row.symbol }}</td><td>{{ row.reason }}</td></tr>
-      {% endfor %}
-    </table>
+  <div class="shdr">Walk-forward validation <span class="aside">Charles · {{ validation_rows|length }} combinations</span></div>
+  <div class="card tcard"><table>
+    <tr><th>Strategy</th><th>Symbol</th><th class="num">Folds</th><th class="num">Sharpe</th>
+        <th class="num">Max DD</th><th></th><th>Reason</th></tr>
+    {% for row in validation_rows %}
+    <tr><td>{{ row.strategy }}</td><td>{{ row.symbol }}</td>
+      <td class="num">{{ row.folds_passed }}/{{ row.folds_total }}</td>
+      <td class="num">{{ row.sharpe }}</td><td class="num">{{ row.max_drawdown }}%</td>
+      <td><span class="bdg {{ 'pass' if row.eligible else 'fail' }}">{{ 'pass' if row.eligible else 'fail' }}</span></td>
+      <td class="mut">{{ row.reject_reason }}</td></tr>
     {% else %}
-    <p class="empty">No blocks.</p>
-    {% endif %}
-  </section>
+    <tr><td colspan="7" class="empty">No validation results cached.</td></tr>
+    {% endfor %}
+  </table></div>
 
-  <section>
-    <h2>Regime (Greg)</h2>
-    <table>
-      <tr><th>Symbol</th><th>Regime</th><th class="num">ADX</th><th>Detail</th></tr>
-      {% for row in regime_rows %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        <td><span class="pill {{ row.regime }}">{{ row.regime }}</span></td>
-        <td class="num">{{ row.adx }}</td>
-        <td>{{ row.detail }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
+  <div class="grid g2">
+    <div>
+      <div class="shdr">Regime <span class="aside">Greg</span></div>
+      <div class="card tcard"><table>
+        <tr><th>Symbol</th><th>Regime</th><th class="num">ADX</th><th>Detail</th></tr>
+        {% for row in regime_rows %}
+        <tr><td>{{ row.symbol }}</td><td><span class="bdg {{ row.regime }}">{{ row.regime }}</span></td>
+          <td class="num">{{ row.adx }}</td><td class="mut">{{ row.detail }}</td></tr>
+        {% else %}<tr><td colspan="4" class="empty">No regime read.</td></tr>{% endfor %}
+      </table></div>
+    </div>
+    <div>
+      <div class="shdr">Data <span class="aside">Wong · compliance: {{ compliance_rows|length if compliance_rows else 'no' }} block(s)</span></div>
+      <div class="card tcard"><table>
+        <tr><th>Symbol</th><th class="num">Bars</th><th>Source</th><th>Last</th><th></th></tr>
+        {% for row in data_rows %}
+        <tr><td>{{ row.symbol }}</td><td class="num">{{ row.bars }}</td><td>{{ row.source }}</td>
+          <td>{{ row.last_date }}</td><td>{% if row.synthetic %}<span class="bdg synthetic">synthetic</span>{% endif %}</td></tr>
+        {% else %}<tr><td colspan="5" class="empty">No data cached.</td></tr>{% endfor %}
+        {% for row in compliance_rows or [] %}
+        <tr><td>{{ row.symbol }}</td><td colspan="4" class="dn">Blocked: {{ row.reason }}</td></tr>
+        {% endfor %}
+      </table></div>
+    </div>
+  </div>
 
-  <section>
-    <h2>Walk-Forward Validation (Charles)</h2>
-    <table>
-      <tr><th>Strategy</th><th>Symbol</th><th class="num">Folds</th><th class="num">Sharpe</th>
-          <th class="num">Max DD</th><th></th><th>Reason</th></tr>
-      {% for row in validation_rows %}
-      <tr>
-        <td>{{ row.strategy }}</td>
-        <td>{{ row.symbol }}</td>
-        <td class="num">{{ row.folds_passed }}/{{ row.folds_total }}</td>
-        <td class="num">{{ row.sharpe }}</td>
-        <td class="num">{{ row.max_drawdown }}%</td>
-        <td>{% if row.eligible %}<span class="pill live">pass</span>{% else %}<span class="pill blocked">fail</span>{% endif %}</td>
-        <td>{{ row.reject_reason }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
+  <div class="shdr">Risk &amp; allocation <span class="aside">Charles + Greg</span></div>
+  {% if allocation_rows %}
+  <div class="card tcard"><table>
+    <tr><th>Strategy</th><th>Symbol</th><th>Regime</th><th></th><th class="num">Base %</th><th class="num">Adjusted %</th><th>Note</th></tr>
+    {% for row in allocation_rows %}
+    <tr><td>{{ row.strategy }}</td><td>{{ row.symbol }}</td>
+      <td><span class="bdg {{ row.regime }}">{{ row.regime }}</span></td>
+      <td><span class="bdg {{ 'live' if row.matched else 'flat' }}">{{ 'matched' if row.matched else 'mismatched' }}</span></td>
+      <td class="num">{{ row.base_weight }}%</td><td class="num">{{ row.adjusted_weight }}%</td>
+      <td class="mut">{{ row.note }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% endif %}
+  {% if benched_traders %}
+  <div class="card tcard" style="margin-top:10px"><table>
+    <tr><th>Benched</th><th>Reason</th></tr>
+    {% for trader, reason in benched_traders %}
+    <tr><td><span class="bdg bench">{{ trader }}</span></td><td class="mut">{{ reason }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% elif not allocation_rows %}
+  <p class="empty">No allocation today.</p>
+  {% endif %}
 
-  <section>
-    <h2>Risk &amp; Allocation (Charles + Greg)</h2>
-    <p><strong>Live:</strong>
-      {% if live_traders %}
-        {% for t in live_traders %}<span class="pill live">{{ t }}</span> {% endfor %}
-      {% else %}
-        <span class="empty">none today</span>
-      {% endif %}
-    </p>
-    {% if benched_traders %}
-    <p><strong>Benched:</strong></p>
-    <table>
-      <tr><th>Trader</th><th>Reason</th></tr>
-      {% for trader, reason in benched_traders %}
-      <tr><td><span class="pill benched">{{ trader }}</span></td><td>{{ reason }}</td></tr>
-      {% endfor %}
-    </table>
-    {% endif %}
-    {% if allocation_rows %}
-    <p style="margin-top:16px;"><strong>Regime-adjusted weights:</strong></p>
-    <table>
-      <tr><th>Strategy</th><th>Symbol</th><th>Regime</th><th></th>
-          <th class="num">Base %</th><th class="num">Adjusted %</th><th>Note</th></tr>
-      {% for row in allocation_rows %}
-      <tr>
-        <td>{{ row.strategy }}</td>
-        <td>{{ row.symbol }}</td>
-        <td><span class="pill {{ row.regime }}">{{ row.regime }}</span></td>
-        <td>{% if row.matched %}<span class="pill live">matched</span>{% else %}<span class="pill benched">mismatched</span>{% endif %}</td>
-        <td class="num">{{ row.base_weight }}%</td>
-        <td class="num">{{ row.adjusted_weight }}%</td>
-        <td>{{ row.note }}</td>
-      </tr>
-      {% endfor %}
-    </table>
-    {% endif %}
-  </section>
+  {% if options and options.chains %}
+  <div class="shdr">Option chains <span class="aside">Augustus</span></div>
+  <div class="card tcard"><table>
+    <tr><th>Underlying</th><th class="num">Expirations</th><th class="num">Calls</th><th class="num">Puts</th><th>Source</th><th></th></tr>
+    {% for c in options.chains %}
+    <tr><td>{{ c.underlying }}</td><td class="num">{{ c.expirations }}</td>
+      <td class="num">{{ "{:,}".format(c.calls) }}</td><td class="num">{{ "{:,}".format(c.puts) }}</td>
+      <td>{{ c.source }}</td><td>{% if c.synthetic %}<span class="bdg synthetic">synthetic</span>{% endif %}</td></tr>
+    {% endfor %}
+  </table></div>
+  <p class="note">{{ options.trade_count }} options trade(s), realized {{ "{:+,.2f}".format(options.realized_pnl) }}.</p>
+  {% endif %}
+</section>
 
-  <section>
-    <h2>Buy-and-Hold Benchmark</h2>
-    <table>
-      <tr><th>Symbol</th><th class="num">Sharpe</th><th class="num">CAGR</th><th class="num">Max DD</th></tr>
-      {% for row in benchmark_rows %}
-      <tr>
-        <td>{{ row.symbol }}</td>
-        <td class="num">{{ row.sharpe }}</td>
-        <td class="num {{ 'pos' if row.cagr >= 0 else 'neg' }}">{{ row.cagr }}%</td>
-        <td class="num">{{ row.max_drawdown }}%</td>
-      </tr>
-      {% endfor %}
-    </table>
-  </section>
+<!-- ======================= THE FLOOR ======================= -->
+<section id="p-floor" class="page" role="tabpanel">
+  <div class="shdr">The stock desk <span class="aside">the team behind the $5k book</span></div>
+  <div class="roster">
+    {% for m in v.team.stock %}
+    <div class="card rcard">
+      {% if m.photo %}<img class="portrait" src="data:image/jpeg;base64,{{ m.photo }}" alt="{{ m.name }}">
+      {% else %}<div class="portrait mono">{{ m.initial }}</div>{% endif %}
+      <div class="rn">{{ m.name }}</div>
+      <div class="rr">{{ m.role }}</div>
+      <div class="st"><span class="dot {{ m.level }}"></span>{{ m.status }}</div>
+      <p class="rd">{{ m.desc }}</p>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="shdr">The options desk <span class="aside">the team behind the $1k bucket</span></div>
+  <div class="roster">
+    {% for m in v.team.options %}
+    <div class="card rcard">
+      {% if m.photo %}<img class="portrait" src="data:image/jpeg;base64,{{ m.photo }}" alt="{{ m.name }}">
+      {% else %}<div class="portrait mono">{{ m.initial }}</div>{% endif %}
+      <div class="rn">{{ m.name }}</div>
+      <div class="rr">{{ m.role }}</div>
+      <div class="st"><span class="dot {{ m.level }}"></span>{{ m.status }}</div>
+      <p class="rd">{{ m.desc }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+</main>
 
-  <footer>
-    Not financial advice. Backtests overfit. Markets change. — Meridian Capital v1.0
-  </footer>
+<footer>Not financial advice. Backtests overfit. Markets change. — Meridian Capital v1.0</footer>
+
+<div class="overlay" id="modal" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="m-title">
+    <div class="mhdr">
+      <div><div class="mtitle" id="m-title"></div><div class="msub" id="m-sub"></div></div>
+      <button class="mbtn" id="m-close" aria-label="Close">✕</button>
+    </div>
+    <div class="mbody" id="m-body"></div>
+  </div>
 </div>
+
+<script>
+(function () {
+  var STRATS = {{ v.strats | tojson }};
+  var KEY = 'meridian.tab';
+  var tabs = document.querySelectorAll('.tab');
+
+  function store(k, val) { try { sessionStorage.setItem(k, val); } catch (e) {} }
+  function load(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+
+  function show(id) {
+    if (!document.getElementById('p-' + id)) id = 'overview';
+    document.querySelectorAll('.page').forEach(function (p) { p.classList.toggle('active', p.id === 'p-' + id); });
+    tabs.forEach(function (t) {
+      var on = t.dataset.tab === id;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', on);
+    });
+    store(KEY, id);
+    if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
+  }
+  tabs.forEach(function (t) { t.addEventListener('click', function () { show(t.dataset.tab); window.scrollTo(0, 0); }); });
+  window.addEventListener('hashchange', function () { show(location.hash.slice(1)); });
+
+  // Survive the 60s auto-refresh: same tab, same scroll position.
+  show(location.hash.slice(1) || load(KEY) || 'overview');
+  var y = parseInt(load('meridian.y') || '0', 10);
+  if (y) window.scrollTo(0, y);
+  window.addEventListener('beforeunload', function () { store('meridian.y', String(window.scrollY)); });
+
+  // Strategy detail modal.
+  var modal = document.getElementById('modal');
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function kv(k, val, cls) { return '<div class="kv"><span>' + k + '</span><span class="' + (cls || '') + '">' + esc(val) + '</span></div>'; }
+  function openStrat(name) {
+    var s = STRATS[name]; if (!s) return;
+    document.getElementById('m-title').textContent = name;
+    document.getElementById('m-sub').textContent = s.style + ' · ' + s.status.toUpperCase();
+    var html = kv('Best symbol', s.symbol) +
+      kv('Sharpe', s.sharpe === null ? '—' : s.sharpe) +
+      kv('CAGR', s.cagr === null ? '—' : s.cagr + '%', s.cagr === null ? '' : (s.cagr >= 0 ? 'up' : 'dn')) +
+      kv('Max drawdown', s.max_drawdown === null ? '—' : s.max_drawdown + '%') +
+      kv('Walk-forward', s.walkforward) +
+      kv('Position size', s.position_pct === null ? '—' : s.position_pct + '%') +
+      kv('Regime on best symbol', s.regime, 'gld');
+    if (s.per_symbol.length) {
+      html += '<div class="shdr">By symbol</div><table><tr><th>Symbol</th><th class="num">Sharpe</th><th class="num">Folds</th><th class="num">Max DD</th><th></th></tr>';
+      s.per_symbol.forEach(function (p) {
+        html += '<tr><td>' + esc(p.symbol) + '</td><td class="num">' + p.sharpe + '</td><td class="num">' + p.folds +
+          '</td><td class="num">' + p.dd + '%</td><td><span class="bdg ' + (p.eligible ? 'pass' : 'fail') + '">' + (p.eligible ? 'pass' : 'fail') + '</span></td></tr>';
+      });
+      html += '</table>';
+    }
+    var note = s.status === 'live' ? "Live and sized today by Charles's risk parity, adjusted for Greg's regime read."
+      : s.status === 'watch' ? 'Passed walk-forward but not sized today: roster cap or a shared correlated slot.'
+      : (s.reason ? 'Benched: ' + s.reason : '');
+    if (note) html += '<div class="mnote">' + esc(note) + '</div>';
+    document.getElementById('m-body').innerHTML = html;
+    modal.classList.add('open'); modal.setAttribute('aria-hidden', 'false');
+  }
+  function closeModal() { modal.classList.remove('open'); modal.setAttribute('aria-hidden', 'true'); }
+  document.querySelectorAll('tr[data-strat]').forEach(function (r) {
+    r.addEventListener('click', function () { openStrat(r.dataset.strat); });
+    r.addEventListener('keydown', function (e) { if (e.key === 'Enter') openStrat(r.dataset.strat); });
+  });
+  modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
+  document.getElementById('m-close').addEventListener('click', closeModal);
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+})();
+</script>
 </body>
 </html>
