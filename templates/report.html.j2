@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="refresh" content="60">
 <title>Meridian Capital — Daily Dashboard</title>
 <style>
   :root {
@@ -124,6 +125,7 @@
       <p class="wordmark">MERIDIAN CAPITAL</p>
       <p class="tagline">multi-agent trading research desk</p>
       <p class="generated">{{ generated_at }}</p>
+      {% if stock_note %}<p class="generated">{{ stock_note }}</p>{% endif %}
     </div>
   </header>
 
@@ -221,6 +223,109 @@
     </table>
     {% else %}
     <p class="empty">No open positions. Cash: ${{ "{:,.0f}".format(ledger.cash) }}</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  {% if options %}
+  <section>
+    <h2>Options Bucket (Augustus · Theo · Joseph)</h2>
+    <div class="metrics-row">
+      <div class="metric">
+        <div class="label">Bucket Value</div>
+        <div class="value">${{ "{:,.2f}".format(options.equity) }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">P&amp;L Since Inception</div>
+        <div class="value {{ 'pos' if options.total_pnl >= 0 else 'neg' }}">
+          {{ "%+.1f"|format(options.total_pnl_pct) }}%
+          <span style="font-size:13px;">({{ "{:+,.2f}".format(options.total_pnl) }})</span>
+        </div>
+      </div>
+      <div class="metric">
+        <div class="label">Cash / Premium at Risk</div>
+        <div class="value">${{ "{:,.0f}".format(options.cash) }} / ${{ "{:,.0f}".format(options.open_premium) }}</div>
+      </div>
+    </div>
+    <p class="note">Separate ${{ "{:,.0f}".format(options.starting_capital) }} bucket — never blended
+      with the stock ledger. Last options run: {{ options.updated_at }}.
+      {{ options.trade_count }} trade(s), realized {{ "{:+,.2f}".format(options.realized_pnl) }}.
+      {% if options.halt_floor is not none %}Halts at ${{ "{:,.0f}".format(options.halt_floor) }}.{% endif %}</p>
+    {% if options.halted %}
+    <div class="warning">⛔ OPTIONS HALTED: {{ options.halt_reason }} — clear with
+      <code>python main.py clear-halt --options</code>.</div>
+    {% endif %}
+
+    {% if options.signals %}
+    <p style="margin-top:16px;"><strong>Today's signal ({{ options.signals[0].trigger }}):</strong></p>
+    <table>
+      <tr><th>Underlying</th><th></th><th>Detail</th></tr>
+      {% for s in options.signals %}
+      <tr>
+        <td>{{ s.underlying }}</td>
+        <td>{% if s.signal_long %}<span class="pill live">long</span>{% else %}<span class="pill benched">flat</span>{% endif %}</td>
+        <td>{{ s.detail }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    <p style="margin-top:16px;"><strong>Open positions:</strong></p>
+    {% if options.positions %}
+    <table>
+      <tr><th>Contract</th><th class="num">Qty</th><th class="num">Paid</th><th class="num">Now</th>
+          <th class="num">P&amp;L</th><th class="num">Held</th><th class="num">To Exp</th></tr>
+      {% for row in options.positions %}
+      <tr>
+        <td>{{ row.label }}{% if not row.quoted %} <span class="pill undecided">at cost</span>{% endif %}</td>
+        <td class="num">{{ row.contracts }}</td>
+        <td class="num">${{ "{:,.2f}".format(row.premium_paid) }}</td>
+        <td class="num">${{ "{:,.2f}".format(row.value) }}</td>
+        <td class="num {{ 'pos' if row.pnl >= 0 else 'neg' }}">{{ "{:+,.2f}".format(row.pnl) }}</td>
+        <td class="num">{{ row.days_held }}d</td>
+        <td class="num">{{ row.days_to_exp }}d</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% else %}
+    <p class="empty">No open option positions.</p>
+    {% endif %}
+
+    {% if options.recent_trades %}
+    <p style="margin-top:16px;"><strong>Recent trades:</strong></p>
+    <table>
+      <tr><th>Date</th><th>Side</th><th>Contract</th><th class="num">Qty</th>
+          <th class="num">Premium</th><th class="num">Realized</th><th>Reason</th></tr>
+      {% for t in options.recent_trades %}
+      <tr>
+        <td>{{ t.date }}</td><td>{{ t.side }}</td><td>{{ t.label }}</td>
+        <td class="num">{{ t.contracts }}</td>
+        <td class="num">${{ "{:,.2f}".format(t.premium) }}</td>
+        <td class="num {{ 'pos' if t.realized_pnl >= 0 else 'neg' }}">{{ "{:+,.2f}".format(t.realized_pnl) }}</td>
+        <td>{{ t.reason }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if options.chains %}
+    <p style="margin-top:16px;"><strong>Option chains (Augustus):</strong></p>
+    <table>
+      <tr><th>Underlying</th><th class="num">Expirations</th><th class="num">Calls</th>
+          <th class="num">Puts</th><th>Source</th><th></th></tr>
+      {% for c in options.chains %}
+      <tr>
+        <td>{{ c.underlying }}</td><td class="num">{{ c.expirations }}</td>
+        <td class="num">{{ c.calls }}</td><td class="num">{{ c.puts }}</td>
+        <td>{{ c.source }}</td>
+        <td>{% if c.synthetic %}<span class="pill blocked">synthetic</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    {% if options.equity_chart %}
+    <div class="chart-grid" style="margin-top:16px;">{{ options.equity_chart }}</div>
     {% endif %}
   </section>
   {% endif %}

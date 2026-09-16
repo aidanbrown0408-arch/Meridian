@@ -14,6 +14,7 @@ same way it is in the console report.
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -36,6 +37,11 @@ log = get_logger("reporting", agent="George")
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 STANDUP_WEEKDAYS = range(0, 5)  # Monday=0 .. Friday=4
+# Written by `paper-options`, read by every dashboard render.
+OPTIONS_STATUS_FILE = "options_status.json"
+# The last stock-side context, so `paper-options` can re-render latest.html
+# without re-running the whole stock pipeline.
+STOCK_CONTEXT_FILE = "dashboard_context.json"
 
 
 @dataclass
@@ -72,6 +78,9 @@ class ReportingAgent:
             write_file: bool = True, post_slack: bool = True) -> DashboardResult:
         context = self._build_context(market, compliance, results, benchmarks,
                                        risk_report, regime_report, ledger, recommendations)
+        if write_file:
+            self._save_stock_context(context)
+        context["options"] = self._load_options_summary()
         html = self.env.get_template("report.html.j2").render(**context)
 
         html_path = None
@@ -102,6 +111,138 @@ class ReportingAgent:
         latest.write_text(html, encoding="utf-8")
         log.info("Dashboard written to %s", dated)
         return dated
+
+    # ------------------------------------------------------------------ options
+
+    @staticmethod
+    def build_options_summary(ledger, prices: dict, chains: dict | None = None,
+                              checks: list | None = None, halt_floor: float | None = None
+                              ) -> dict:
+        """Snapshot of the options bucket for the dashboard. Read-only: takes
+        Joseph's ledger as given, never writes it. JSON-safe so it can be
+        cached between runs."""
+        prices = prices or {}
+        equity = ledger.mark_to_market(prices)
+        total_pnl = equity - ledger.starting_capital
+
+        positions = []
+        for key, pos in ledger.positions.items():
+            price = prices.get(key)
+            positions.append({
+                "label": pos.label, "contracts": pos.contracts,
+                "premium_paid": round(pos.premium_paid, 2),
+                "value": round(pos.market_value(price), 2),
+                "pnl": round(pos.unrealized_pnl(price), 2),
+                "days_held": pos.days_held(),
+                "days_to_exp": pos.days_to_expiration(),
+                "quoted": price is not None,
+            })
+
+        trades = []
+        for t in list(ledger.trades)[-5:][::-1]:
+            kind = "C" if t.option_type == "long_call" else "P"
+            trades.append({
+                "date": str(t.date)[:10], "side": t.side,
+                "label": f"{t.underlying} {t.expiration} {t.strike:g}{kind}",
+                "contracts": t.contracts,
+                "premium": round(t.premium_per_contract, 2),
+                "realized_pnl": round(t.realized_pnl, 2), "reason": t.reason,
+            })
+
+        # One point per date (the history can hold several runs on one day).
+        by_date = {}
+        for row in ledger.equity_history:
+            by_date[row["date"]] = float(row["equity"])
+        history = list(by_date.values())
+
+        return {
+            "updated_at": datetime.now().strftime("%A, %B %d %Y — %H:%M"),
+            "starting_capital": ledger.starting_capital,
+            "equity": round(equity, 2), "cash": round(ledger.cash, 2),
+            "total_pnl": round(total_pnl, 2),
+            "total_pnl_pct": round(total_pnl / ledger.starting_capital * 100, 2)
+                             if ledger.starting_capital else 0.0,
+            "realized_pnl": round(ledger.realized_pnl, 2),
+            "open_premium": round(ledger.open_premium, 2),
+            "trade_count": len(ledger.trades),
+            "halted": ledger.halted, "halt_reason": ledger.halt_reason,
+            "halt_floor": round(halt_floor, 2) if halt_floor is not None else None,
+            "positions": positions,
+            "recent_trades": trades,
+            "signals": [{"underlying": c.underlying, "trigger": c.trigger,
+                         "signal_long": bool(c.signal_long), "detail": c.detail}
+                        for c in (checks or [])],
+            "chains": [{"underlying": sym, "expirations": len(ch.expirations),
+                        "calls": len(ch.calls), "puts": len(ch.puts),
+                        "source": ch.data_source, "synthetic": ch.is_synthetic}
+                       for sym, ch in (chains or {}).items()],
+            "equity_chart": line_chart({"Options bucket equity": history},
+                                       title="Options bucket equity ($)")
+                            if len(history) > 1 else "",
+        }
+
+    def refresh_options(self, summary: dict) -> Path:
+        """Called by `paper-options`: cache the options snapshot and re-render
+        latest.html with the last stock context plus the new options section.
+        Only latest.html is touched -- the dated stock reports stay as they
+        were written."""
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
+        (self.reports_dir / OPTIONS_STATUS_FILE).write_text(
+            json.dumps(summary, indent=2, default=_json_default), encoding="utf-8")
+
+        context = self._load_stock_context()
+        if context is None:
+            context = self._empty_stock_context()
+        else:
+            context["stock_note"] = (f"Stock sections are from the "
+                                     f"{context.get('generated_at', 'last')} run.")
+        context["generated_at"] = datetime.now().strftime("%A, %B %d %Y — %H:%M")
+        context["options"] = summary
+        html = self.env.get_template("report.html.j2").render(**context)
+        latest = self.reports_dir / "latest.html"
+        latest.write_text(html, encoding="utf-8")
+        log.info("Options section refreshed in %s", latest)
+        return latest
+
+    def _load_options_summary(self) -> dict | None:
+        path = self.reports_dir / OPTIONS_STATUS_FILE
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            log.warning("Could not read %s (%s) -- options section skipped.", path, exc)
+            return None
+
+    def _save_stock_context(self, context: dict) -> None:
+        try:
+            self.reports_dir.mkdir(parents=True, exist_ok=True)
+            (self.reports_dir / STOCK_CONTEXT_FILE).write_text(
+                json.dumps(context, default=_json_default), encoding="utf-8")
+        except Exception as exc:  # pragma: no cover - never block a report
+            log.warning("Could not cache dashboard context (%s)", exc)
+
+    def _load_stock_context(self) -> dict | None:
+        path = self.reports_dir / STOCK_CONTEXT_FILE
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            log.warning("Could not read %s (%s) -- rendering options only.", path, exc)
+            return None
+
+    def _empty_stock_context(self) -> dict:
+        return {
+            "starting_capital": float(self.config.get("capital.starting_paper_capital", 0.0)),
+            "universe": [], "data_rows": [], "compliance_rows": [], "regime_rows": [],
+            "validation_rows": [], "live_traders": [], "benched_traders": [],
+            "allocation_rows": [], "target_rows": [], "benchmark_rows": [],
+            "synthetic_symbols": [], "equity_chart": "", "drawdown_chart": "",
+            "trader_bar_chart": "", "ledger": None, "recommendation_rows": [],
+            "stock_note": "No stock run cached yet -- run `python3 main.py paper` "
+                          "to fill in the stock sections.",
+        }
 
     # ------------------------------------------------------------------ HTML context
 
@@ -308,3 +449,10 @@ class ReportingAgent:
             lines.append("\U0001F4CA George (Reporting): Full report attached.")
 
         return "\n".join(lines)
+
+
+def _json_default(obj):
+    """numpy scalars (np.bool_, np.float64) -> plain Python for json.dumps."""
+    if hasattr(obj, "item"):
+        return obj.item()
+    return str(obj)

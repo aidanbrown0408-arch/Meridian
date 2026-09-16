@@ -229,6 +229,16 @@ def run_paper_options(config, symbols: list[str] | None = None):
     ledger = joseph.execute(proposals=proposals, prices=prices)
 
     _print_options_report(chains, ledger, prices, checks)
+
+    # Refresh the options section of reports/latest.html. A dashboard
+    # problem must never fail the trading run, so it only logs.
+    try:
+        summary = ReportingAgent.build_options_summary(
+            ledger, prices, chains=chains, checks=checks, halt_floor=joseph.halt_floor)
+        path = ReportingAgent(config).refresh_options(summary)
+        print(f"    Dashboard updated: {path}")
+    except Exception as exc:
+        log.warning("Options dashboard refresh failed (%s) -- ledger is unaffected.", exc)
     return ledger
 
 
