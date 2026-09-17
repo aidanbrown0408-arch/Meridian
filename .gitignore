@@ -5,3 +5,4 @@ reports/*.log
 reports/*.html
 reports/*.json
 .venv/
+Claude outputs/
