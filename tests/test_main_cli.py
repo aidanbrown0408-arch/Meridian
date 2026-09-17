@@ -1,5 +1,14 @@
-"""`paper-options` CLI wiring tests — Augustus -> SPARK-calls strategy ->
-Theo -> Joseph end-to-end, plus the `--options` flag on killswitch/clear-halt.
+"""Options routing tests — Augustus -> SPARK-calls strategy -> Theo -> Joseph
+end-to-end via `main._run_options_leg`, plus the `--options` flag on
+killswitch/clear-halt.
+
+`_run_options_leg` no longer fetches its own stock bars (that was
+`run_paper_options`'s job, now retired) -- it's handed a `market` dict the
+same way `run_paper` hands it one, reusing whatever Wong already fetched
+for the live pipeline that run. Tests here build that `market` dict
+themselves via a plain `DataAgent(cfg).fetch_universe(symbols)` call, same
+as `run_paper` does internally, then pass it straight to
+`main._run_options_leg`.
 
 Every test redirects the options ledger to a temp path (same trick
 `test_options_broker.py` uses) so nothing here touches a real ledger file.
@@ -46,6 +55,15 @@ def _options_config(tmp_path, **overrides) -> Config:
     return Config(data)
 
 
+def _run_options_leg(cfg: Config, symbols: list[str]):
+    """What `run_paper` does now: fetch the stock bars once, hand that same
+    `market` dict to the options leg. Standing in here for the live
+    pipeline's own Wong fetch, since these tests exercise the options leg
+    in isolation."""
+    market = DataAgent(cfg).fetch_universe(symbols)
+    return main._run_options_leg(cfg, market)
+
+
 # ------------------------------------------------------------------ argparse
 
 
@@ -70,7 +88,7 @@ def test_options_flag_defaults_false():
 
 def test_run_paper_options_is_noop_when_disabled(tmp_path):
     cfg = _options_config(tmp_path, enabled=False)
-    assert main.run_paper_options(cfg, symbols=["SPY"]) is None
+    assert _run_options_leg(cfg, ["SPY"]) is None
 
 
 def test_run_paper_options_opens_nothing_without_live_data(tmp_path):
@@ -81,7 +99,7 @@ def test_run_paper_options_opens_nothing_without_live_data(tmp_path):
     (fetch -> signal check -> Theo -> Joseph) runs end-to-end and fails
     safe with no live data."""
     cfg = _options_config(tmp_path, enabled=True)
-    ledger = main.run_paper_options(cfg, symbols=["SPY"])
+    ledger = _run_options_leg(cfg, ["SPY"])
     assert ledger is not None
     assert ledger.positions == {}
     assert ledger.cash == ledger.starting_capital
@@ -90,8 +108,8 @@ def test_run_paper_options_opens_nothing_without_live_data(tmp_path):
 
 def test_run_paper_options_persists_the_ledger_across_runs(tmp_path):
     cfg = _options_config(tmp_path, enabled=True)
-    first = main.run_paper_options(cfg, symbols=["SPY"])
-    second = main.run_paper_options(cfg, symbols=["SPY"])
+    first = _run_options_leg(cfg, ["SPY"])
+    second = _run_options_leg(cfg, ["SPY"])
     assert first.created_at == second.created_at  # same ledger file, not recreated
 
 
@@ -138,7 +156,7 @@ def test_run_paper_options_opens_a_position_with_live_data(tmp_path, monkeypatch
     monkeypatch.setattr(DataAgent, "fetch_universe", fake_stock_fetch)
     monkeypatch.setattr(OptionsDataAgent, "fetch_universe", fake_chain_fetch)
 
-    ledger = main.run_paper_options(cfg, symbols=["SPY"])
+    ledger = _run_options_leg(cfg, ["SPY"])
     assert len(ledger.positions) == 1
     position = next(iter(ledger.positions.values()))
     assert position.underlying == "SPY" and position.option_type == "long_call"
@@ -161,8 +179,8 @@ def test_run_paper_options_does_not_pyramid_on_a_second_run(tmp_path, monkeypatc
     monkeypatch.setattr(OptionsDataAgent, "fetch_universe",
                         lambda self, symbols=None: {"SPY": _live_chain("SPY", spot, expiration)})
 
-    main.run_paper_options(cfg, symbols=["SPY"])
-    second = main.run_paper_options(cfg, symbols=["SPY"])
+    _run_options_leg(cfg, ["SPY"])
+    second = _run_options_leg(cfg, ["SPY"])
     assert len(second.positions) == 1  # still just the one, not stacked
 
 
@@ -172,7 +190,7 @@ def test_run_paper_options_does_not_pyramid_on_a_second_run(tmp_path, monkeypatc
 def test_killswitch_options_flag_routes_to_joseph_not_cornelius(tmp_path):
     """The stock ledger must not exist/move; only the options ledger halts."""
     cfg = _options_config(tmp_path, enabled=True)
-    main.run_paper_options(cfg, symbols=["SPY"])  # create the options ledger
+    _run_options_leg(cfg, ["SPY"])  # create the options ledger
     assert main.run_killswitch(cfg, symbols=["SPY"], options=True) == 0
 
     from agents.options_broker import OptionsBroker
@@ -183,7 +201,7 @@ def test_killswitch_options_flag_routes_to_joseph_not_cornelius(tmp_path):
 
 def test_clear_halt_options_flag_clears_only_the_options_halt(tmp_path):
     cfg = _options_config(tmp_path, enabled=True)
-    main.run_paper_options(cfg, symbols=["SPY"])
+    _run_options_leg(cfg, ["SPY"])
     main.run_killswitch(cfg, symbols=["SPY"], options=True)
 
     assert main.run_clear_halt(cfg, options=True) == 0
@@ -192,6 +210,59 @@ def test_clear_halt_options_flag_clears_only_the_options_halt(tmp_path):
     ledger = OptionsBroker(cfg).load_ledger()
     assert not ledger.halted
     assert ledger.halt_reason == ""
+
+
+# ------------------------------------------------------------------ routing (no double-exposure)
+
+
+def test_route_options_underlyings_zeroes_only_the_options_symbols():
+    """The core guarantee: SPY/QQQ's target weight is zeroed before it ever
+    reaches Cornelius, every other symbol's netted position is untouched,
+    and nothing else about the decision (capped flag, contributors, for
+    the dashboard/shadow reporting) is lost in the process."""
+    from agents.regime_agent import RegimeReport
+    from agents.risk_agent import NettedPosition
+
+    report = RegimeReport(netted_positions={
+        "SPY": NettedPosition("SPY", target_weight=0.4, capped=False, contributors=["SPARK"]),
+        "QQQ": NettedPosition("QQQ", target_weight=0.1, capped=True, contributors=["SPARK"]),
+        "AAPL": NettedPosition("AAPL", target_weight=0.2, capped=False, contributors=["Momentum"]),
+    })
+
+    routed = main._route_options_underlyings(report, {"SPY", "QQQ"})
+
+    assert routed.netted_positions["SPY"].target_weight == 0.0
+    assert routed.netted_positions["QQQ"].target_weight == 0.0
+    assert routed.netted_positions["AAPL"].target_weight == 0.2  # untouched
+    # Everything else about the position survives -- only the weight moves.
+    assert routed.netted_positions["QQQ"].capped is True
+    assert routed.netted_positions["QQQ"].contributors == ["SPARK"]
+    # The input report is never mutated in place.
+    assert report.netted_positions["SPY"].target_weight == 0.4
+
+
+def test_route_options_underlyings_ignores_symbols_with_no_signal_today():
+    from agents.regime_agent import RegimeReport
+    from agents.risk_agent import NettedPosition
+
+    report = RegimeReport(netted_positions={
+        "AAPL": NettedPosition("AAPL", target_weight=0.2, capped=False, contributors=["Momentum"]),
+    })
+    routed = main._route_options_underlyings(report, {"SPY", "QQQ"})
+    assert routed.netted_positions == report.netted_positions
+
+
+def test_paper_options_cli_mode_is_deprecated_and_no_longer_runs(tmp_path, monkeypatch, capsys):
+    """`python main.py paper-options` used to run a standalone leg; now it
+    should refuse and point the operator at `paper` instead, rather than
+    silently doing nothing useful."""
+    called = {"paper": False}
+    monkeypatch.setattr(main, "run_paper", lambda *a, **k: called.__setitem__("paper", True))
+    monkeypatch.setattr(main, "load_config",
+                        lambda *a, **k: _options_config(tmp_path, enabled=True))
+    rc = main.main(["paper-options"])
+    assert rc == 1
+    assert called["paper"] is False  # deprecated mode never silently runs the merged pipeline
 
 
 if __name__ == "__main__":

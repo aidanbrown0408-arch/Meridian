@@ -1,8 +1,7 @@
 """Meridian Capital — orchestrator CLI.
 
     python main.py research           # backtest + validate + console report
-    python main.py paper              # + simulated fills against a persisted ledger
-    python main.py paper-options      # options bucket: Augustus -> Theo -> Joseph
+    python main.py paper              # + simulated fills, incl. the options leg
     python main.py live               # real money             (Phase 5, triple-gated)
     python main.py killswitch [--options]     # flatten open positions + halt
     python main.py clear-halt [--options]     # manually clear a killswitch halt
@@ -20,12 +19,17 @@ ledger and the lifecycle agent's benching recommendations. `bench`/`unbench`/
 spec's four named entry points, but a necessary way to exercise it from a
 CLI rather than an interactive Slack app.
 
-`paper-options` is a fully separate track: Augustus fetches SPY/QQQ option
-chains, the SPARK-calls strategy (`strategies/options_strategy.py`) checks
-today's SPARK signal on each underlying using Wong's bars read-only, Theo
-enforces the four hard caps, and Joseph executes against its own $1,000
-ledger (`reports/options_ledger.json`) -- never blended with the $5,000
-stock ledger, never sharing a halt. `killswitch` and `clear-halt` take an
+Options is a separate ledger and a separate set of agents, but no longer a
+separate run. Whatever Wong/David/Leo/Charles/Greg agree on for SPY or QQQ
+inside `paper` is the same decision handed to the options desk: if
+`options.enabled` is on, SPY/QQQ target weight is zeroed before Cornelius
+acts (so they're never opened as shares), and that same agreement --
+reusing the very same `market` bars, not a second independent read -- is
+what the SPARK-calls strategy (`strategies/options_strategy.py`) checks.
+Augustus fetches SPY/QQQ option chains, Theo enforces the four hard caps,
+and Joseph executes against its own $1,000 ledger
+(`reports/options_ledger.json`) -- never blended with the $5,000 stock
+ledger, never sharing a halt. `killswitch` and `clear-halt` still take an
 explicit `--options` flag to pick which bucket they target -- omitting it
 always means the stock side, so a stock-side habit
 (`python main.py killswitch`) can never accidentally reach into the options
@@ -166,8 +170,21 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
     greg = RegimeAgent(config)
     regime_report = greg.run(leo.strategies, market, results, risk_report)
 
+    # SPY/QQQ never get opened as shares -- if the options bucket is on,
+    # their target weight is zeroed before Cornelius sees it, and the same
+    # agreement (Wong/David/Leo/Charles/Greg, same market dict, same
+    # SPARK signal) is handed to Augustus/Theo/Joseph instead.
+    options_underlyings = set(config.get("options.underlyings", [])) \
+        if config.get("options.enabled", False) else set()
+    stock_regime_report = (_route_options_underlyings(regime_report, options_underlyings)
+                           if options_underlyings else regime_report)
+
     cornelius = PaperBroker(config)
-    ledger = cornelius.execute(market, regime_report.netted_positions, regime_report.adjustments)
+    ledger = cornelius.execute(market, stock_regime_report.netted_positions,
+                               stock_regime_report.adjustments)
+
+    if options_underlyings:
+        _run_options_leg(config, market)
 
     predicted_sharpe = {}
     for c in risk_report.candidates:
@@ -177,41 +194,52 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
 
     george = ReportingAgent(config)
     dashboard = george.run(market, compliance, results, benchmarks, risk_report,
-                           regime_report, ledger=ledger, recommendations=recommendations,
+                           stock_regime_report, ledger=ledger, recommendations=recommendations,
                            post_slack=post_slack)
 
     frame = results_frame(results)
     _print_report(config, market, frame, benchmarks, blocked, risk_report,
-                  regime_report, dashboard, recommendations, ledger=ledger)
+                  stock_regime_report, dashboard, recommendations, ledger=ledger)
     return frame
 
 
-# ------------------------------------------------------------------ paper-options
+# ------------------------------------------------------------------ options routing
 
-def run_paper_options(config, symbols: list[str] | None = None):
-    """Augustus -> the SPARK-calls strategy -> Theo -> Joseph. Completely
-    separate from `_run_pipeline` above: its own ledger, no shared state
-    with the stock side -- except reading Wong's bars, read-only, purely
-    to answer "is SPARK long today" for each underlying. Nothing here ever
-    proposes, opens, or touches a position on the $5,000 stock ledger.
+def _route_options_underlyings(regime_report: RegimeReport, underlyings: set[str]
+                               ) -> "RegimeReport":
+    """Zero out SPY/QQQ's target weight before Cornelius ever sees it, so
+    the stock desk can never open a share position in a symbol the options
+    desk is about to act on. Every other symbol's netted position passes
+    through untouched. This is the entire "one decision, one instrument"
+    fix -- Leo/Charles/Greg's agreement on SPY/QQQ is unchanged; only what
+    Cornelius is allowed to do with it changes."""
+    import dataclasses
+    netted = dict(regime_report.netted_positions)
+    for symbol in underlyings:
+        pos = netted.get(symbol)
+        if pos is not None and pos.target_weight != 0.0:
+            netted[symbol] = dataclasses.replace(pos, target_weight=0.0)
+    return dataclasses.replace(regime_report, netted_positions=netted)
 
-    Phase B: one entry rule (`strategies/options_strategy.py`), Theo still
-    has final say on every proposal, and Joseph still owns the only write
-    path to the ledger. Phase A4's proof (empty proposals still exercise
-    expiration settlement / cutoff / persistence) still holds whenever the
-    signal is flat or the chain comes back synthetic.
+
+def _run_options_leg(config, market: dict, checks_only: bool = False):
+    """Augustus -> the SPARK-calls strategy -> Theo -> Joseph, reusing the
+    SAME `market` dict Wong already fetched for the live stock pipeline
+    this run -- not a second, independent read of the bars. This is what
+    makes it "the agents agreed on a trade, so open a call instead of
+    shares" rather than a parallel check that happens to agree.
+
+    Strategy itself is untouched (`strategies/options_strategy.py`, same
+    SPARK read as before). Only the trigger for calling this moved -- it
+    now fires inside `run_paper`, at the moment Cornelius would otherwise
+    have acted on SPY/QQQ, instead of on its own daily schedule.
     """
     if not config.get("options.enabled", False):
-        log.warning("options.enabled is false in config -- paper-options is a "
+        log.warning("options.enabled is false in config -- the options leg is a "
                    "no-op. Set options.enabled: true to turn the bucket on.")
         return None
 
-    underlyings = symbols or list(config.get("options.underlyings"))
-
-    # Read-only borrow of Wong's stock bars, purely to evaluate today's
-    # SPARK signal. Never writes to, or reads from, the stock ledger.
-    wong = DataAgent(config)
-    market = wong.fetch_universe(underlyings)
+    underlyings = list(config.get("options.underlyings"))
 
     augustus = OptionsDataAgent(config)
     chains = augustus.fetch_universe(underlyings)
@@ -553,8 +581,11 @@ def main(argv: list[str] | None = None) -> int:
         run_paper(config, args.symbols, post_slack=not args.no_slack)
         return 0
     if args.mode == "paper-options":
-        run_paper_options(config, args.symbols)
-        return 0
+        log.warning("`paper-options` no longer runs standalone -- SPY/QQQ options "
+                   "trades now fire inside `python main.py paper`, at the same "
+                   "moment the stock desk would otherwise have opened them as "
+                   "shares. Run `python main.py paper` instead.")
+        return 1
     if args.mode == "killswitch":
         return run_killswitch(config, args.symbols, options=args.options)
     if args.mode == "clear-halt":
