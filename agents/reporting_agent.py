@@ -2,8 +2,8 @@
 
 Aggregates everything the pipeline produced into the daily Meridian Capital
 dashboard (spec §11-12): an HTML report in the navy/gold Playfair house
-style, plus a standup-style Slack message -- one line per agent that has
-something notable to say, boring days shorter than loud ones.
+style, plus the per-agent standup lines that `utils/notifications.py`
+posts to Slack -- boring days shorter than loud ones.
 
 There is no live P&L yet (Cornelius's PaperBroker is Phase 4), so the
 "positions & trades" section shows today's *target* allocation -- Charles's
@@ -15,8 +15,7 @@ same way it is in the console report.
 from __future__ import annotations
 
 import json
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -31,16 +30,15 @@ from backtester.engine import BacktestResult
 from utils.config import Config
 from utils.logging_setup import get_logger
 from utils.metrics import PerformanceSummary
-from utils.slack import post_message
+from utils.notifications import BookSnapshot, DeskLine, Notifier, StandupPayload
 from utils.svg_charts import bar_chart, line_chart
 
 log = get_logger("reporting", agent="George")
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
-STANDUP_WEEKDAYS = range(0, 5)  # Monday=0 .. Friday=4
-# Written by `paper-options`, read by every dashboard render.
+# Written by the options leg of `paper`, read by every dashboard render.
 OPTIONS_STATUS_FILE = "options_status.json"
-# The last stock-side context, so `paper-options` can re-render latest.html
+# The last stock-side context, so the options leg of `paper` can re-render latest.html
 # without re-running the whole stock pipeline.
 STOCK_CONTEXT_FILE = "dashboard_context.json"
 
@@ -67,9 +65,6 @@ class ReportingAgent:
             autoescape=select_autoescape(["html"]),
         )
         self.env.globals["view"] = make_view_global(config)
-        webhook_env_var = config.get("slack.webhook_url_env", "MERIDIAN_SLACK_WEBHOOK_URL")
-        self.webhook_url = os.environ.get(webhook_env_var)
-        self.post_enabled = bool(config.get("slack.post_daily_standup", True))
 
     # ------------------------------------------------------------------ run
 
@@ -92,18 +87,13 @@ class ReportingAgent:
         standup_text = self.build_standup_text(market, compliance, risk_report, regime_report,
                                                 ledger, recommendations)
         posted = False
-        if post_slack and self.post_enabled:
-            if self._is_standup_day():
-                posted = post_message(self.webhook_url, standup_text)
-            else:
-                log.info("Weekend -- standup post skipped (weekdays only per spec).")
+        if post_slack:
+            payload = self.standup_payload(market, compliance, risk_report, regime_report,
+                                           ledger, recommendations, html_path)
+            posted = Notifier(self.config).standup(payload)
 
         return DashboardResult(html=html, html_path=html_path,
                                standup_text=standup_text, posted_to_slack=posted)
-
-    def _is_standup_day(self, now: datetime | None = None) -> bool:
-        now = now or datetime.now()
-        return now.weekday() in STANDUP_WEEKDAYS
 
     def _write_html(self, html: str) -> Path:
         self.reports_dir.mkdir(parents=True, exist_ok=True)
@@ -184,7 +174,7 @@ class ReportingAgent:
         }
 
     def refresh_options(self, summary: dict) -> Path:
-        """Called by `paper-options`: cache the options snapshot and re-render
+        """Called by the options leg of `paper`: cache the options snapshot and re-render
         latest.html with the last stock context plus the new options section.
         Only latest.html is touched -- the dated stock reports stay as they
         were written."""
@@ -415,57 +405,178 @@ class ReportingAgent:
                            compliance: dict[str, ComplianceReport],
                            risk_report: RiskReport, regime_report: RegimeReport,
                            ledger=None, recommendations: list | None = None) -> str:
-        lines = []
-
-        synthetic = [s for s, d in market.items() if d.is_synthetic]
-        if synthetic:
-            lines.append(f"\U0001F50D Wong (Data): {', '.join(market)} pulled -- "
-                         f"{', '.join(synthetic)} on synthetic fallback, not trusted.")
-        else:
-            lines.append(f"\U0001F50D Wong (Data): Pulled {', '.join(market)} -- "
-                         f"all sources live, no synthetic fallback today.")
-
-        blocked = {s: r.reason for s, r in compliance.items() if r.blocked}
-        if blocked:
-            detail = "; ".join(f"{s} ({r})" for s, r in blocked.items())
-            lines.append(f"\U0001F6D1 David (Compliance): Blocked {detail}.")
-        else:
-            lines.append("\U0001F6D1 David (Compliance): No blocks.")
-
-        if risk_report.live_traders:
-            weights = ", ".join(f"{t} {risk_report.capital_weights.get(t, 0.0):.0%}"
-                                for t in risk_report.live_traders)
-            lines.append(f"⚖️ Charles (Risk): Live today: {weights}.")
-        else:
-            lines.append("⚖️ Charles (Risk): No strategy cleared validation today "
-                         "-- closest contenders in the full report.")
-
-        if regime_report.regimes:
-            regimes = ", ".join(f"{s} {c.regime}" for s, c in regime_report.regimes.items())
-            lines.append(f"\U0001F9ED Greg (Regime): {regimes} today.")
-
+        """Plain-text standup (console, logs, Slack notification preview)."""
+        lines = [l.plain() for l in self.stock_desk_lines(
+            market, compliance, risk_report, regime_report, ledger)]
         for rec in (recommendations or []):
             lines.append(f"\U0001FA91 Lifecycle ({rec.trigger}): {rec.trader} -- "
                          f"{rec.action.upper()}. {rec.detail} Operator approval required "
                          "before anything actually changes.")
+        return "\n".join(lines)
+
+    def stock_desk_lines(self, market: dict[str, MarketData],
+                         compliance: dict[str, ComplianceReport],
+                         risk_report: RiskReport, regime_report: RegimeReport,
+                         ledger=None, new_fills: list | None = None) -> list[DeskLine]:
+        """One line per stock-desk agent -- the standup's "group chat"."""
+        lines: list[DeskLine] = []
+
+        synthetic = [s for s, d in market.items() if d.is_synthetic]
+        if synthetic and len(synthetic) == len(market):
+            lines.append(DeskLine("\U0001F50D", "Wong", "Data",
+                                  f"Every feed ({', '.join(market)}) is on synthetic "
+                                  "fallback — nothing trusted today.", "warn"))
+        elif synthetic:
+            lines.append(DeskLine("\U0001F50D", "Wong", "Data",
+                                  f"Pulled {', '.join(market)}. {', '.join(synthetic)} on "
+                                  "synthetic fallback — not trusted today.", "warn"))
+        else:
+            lines.append(DeskLine("\U0001F50D", "Wong", "Data",
+                                  f"Pulled {', '.join(market)} — all sources live."))
+
+        blocked = {s: r.reason for s, r in compliance.items() if r.blocked}
+        if blocked:
+            detail = "; ".join(f"{s} ({r})" for s, r in blocked.items())
+            lines.append(DeskLine("\U0001F6D1", "David", "Compliance",
+                                  f"Blocked {detail}.", "warn"))
+        else:
+            lines.append(DeskLine("\U0001F6D1", "David", "Compliance", "No blocks."))
+
+        if risk_report.live_traders:
+            weights = ", ".join(f"{t} {risk_report.capital_weights.get(t, 0.0):.0%}"
+                                for t in risk_report.live_traders)
+            lines.append(DeskLine("⚖️", "Charles", "Risk", f"Live today: {weights}."))
+        else:
+            lines.append(DeskLine("⚖️", "Charles", "Risk",
+                                  "No strategy cleared validation today — closest "
+                                  "contenders are in the full report.", "warn"))
+
+        if regime_report.regimes:
+            regimes = ", ".join(f"{s} {c.regime}" for s, c in regime_report.regimes.items())
+            lines.append(DeskLine("\U0001F9ED", "Greg", "Regime", f"{regimes}."))
 
         if ledger is not None:
-            prices = {s: float(d.bars["close"].iloc[-1]) for s, d in market.items()
-                      if not d.bars.empty}
-            equity = ledger.mark_to_market(prices)
-            pnl_pct = ((equity - ledger.starting_capital) / ledger.starting_capital
-                      if ledger.starting_capital else 0.0)
-            halt = "  ⛔ HALTED" if ledger.halted else ""
-            lines.append(f"\U0001F4CA George (Reporting): Paper equity ${equity:,.0f} "
-                         f"({pnl_pct:+.1%} since inception), {len(ledger.positions)} open "
-                         f"position(s).{halt} Full report attached.")
+            fills = new_fills or []
+            if ledger.halted:
+                lines.append(DeskLine("\U0001F4BC", "Cornelius", "Execution",
+                                      f"Halted ({ledger.halt_reason}) — no trades.", "bad"))
+            elif fills:
+                buys = [t.symbol for t in fills if t.side == "buy"]
+                sells = [t.symbol for t in fills if t.side == "sell"]
+                parts = ([f"bought {', '.join(buys)}"] if buys else []) + \
+                        ([f"sold {', '.join(sells)}"] if sells else [])
+                lines.append(DeskLine("\U0001F4BC", "Cornelius", "Execution",
+                                      "Rebalanced: " + "; ".join(parts) + "."))
+            else:
+                lines.append(DeskLine("\U0001F4BC", "Cornelius", "Execution",
+                                      "No fills — book already on target."))
+            lines.append(DeskLine("\U0001F4CA", "George", "Reporting",
+                                  "Dashboard updated."))
         elif risk_report.live_traders:
-            lines.append("\U0001F4CA George (Reporting): Target allocation ready -- no live "
-                         "P&L yet (paper trading begins Phase 4). Full report attached.")
+            lines.append(DeskLine("\U0001F4CA", "George", "Reporting",
+                                  "Target allocation ready — research mode, no fills. "
+                                  "Full report attached."))
         else:
-            lines.append("\U0001F4CA George (Reporting): Full report attached.")
+            lines.append(DeskLine("\U0001F4CA", "George", "Reporting", "Full report attached."))
+        return lines
 
-        return "\n".join(lines)
+    @staticmethod
+    def options_desk_lines(chains: dict, checks: list, proposals: list, rejections: list,
+                           new_trades: list, ledger, prices: dict) -> list[DeskLine]:
+        """Augustus / SPARK / Theo / Joseph lines for the standup chat."""
+        lines: list[DeskLine] = []
+
+        live = [s for s, c in chains.items() if not c.is_synthetic]
+        synthetic = [s for s, c in chains.items() if c.is_synthetic]
+        if chains and not synthetic:
+            lines.append(DeskLine("\U0001F4E1", "Augustus", "Options Data",
+                                  f"Live option chains for {', '.join(live)}."))
+        elif chains:
+            lines.append(DeskLine("\U0001F4E1", "Augustus", "Options Data",
+                                  f"No live chain for {', '.join(synthetic)} — not tradable "
+                                  "today." + (f" Live: {', '.join(live)}." if live else ""),
+                                  "warn"))
+
+        if checks:
+            reads = ", ".join(f"{c.underlying} {'LONG' if c.signal_long else 'flat'}"
+                              for c in checks)
+            any_long = any(c.signal_long for c in checks)
+            lines.append(DeskLine("\u26A1", checks[0].trigger, "Signal",
+                                  f"{reads}.", "good" if any_long else "info"))
+
+        if proposals or rejections:
+            approved = len(proposals) - len(rejections)
+            noun = "proposal" if len(proposals) == 1 else "proposals"
+            text = f"Reviewed {len(proposals)} {noun}: {approved} approved"
+            if rejections:
+                text += "; rejected " + "; ".join(
+                    f"{d.proposal.underlying} ({d.reason})" for d in rejections)
+            lines.append(DeskLine("\U0001F6E1\uFE0F", "Theo", "Options Risk", text + ".",
+                                  "warn" if rejections else "info"))
+        else:
+            longs = [c.underlying for c in checks if c.signal_long]
+            if longs:
+                verb = "has" if len(longs) == 1 else "have"
+                text = (f"No proposals — {', '.join(longs)} signalled long but "
+                        f"{verb} no tradable chain or a call already open.")
+            else:
+                text = "No proposals — no entry signal."
+            lines.append(DeskLine("\U0001F6E1\uFE0F", "Theo", "Options Risk", text))
+
+        if ledger.halted:
+            lines.append(DeskLine("\U0001F3AF", "Joseph", "Options Execution",
+                                  f"HALTED — {ledger.halt_reason}.", "bad"))
+        else:
+            opened = [t for t in new_trades if t.side == "open"]
+            closed = [t for t in new_trades if t.side != "open"]
+            parts = []
+            if opened:
+                parts.append("Opened " + ", ".join(
+                    f"{t.underlying} {t.strike:g}{'C' if t.option_type == 'long_call' else 'P'}"
+                    for t in opened))
+            if closed:
+                parts.append("closed " + ", ".join(
+                    f"{t.underlying} {t.strike:g} ({t.realized_pnl:+,.0f})" for t in closed))
+            text = ("; ".join(parts) + "." if parts else "No trades today.")
+            if ledger.positions:
+                text += " Holding " + ", ".join(p.label for p in ledger.positions.values()) + "."
+            lines.append(DeskLine("\U0001F3AF", "Joseph", "Options Execution", text))
+        return lines
+
+    @staticmethod
+    def options_book(ledger, prices: dict, fills_today: int = 0) -> BookSnapshot:
+        return BookSnapshot("Options desk", ledger.mark_to_market(prices),
+                            ledger.starting_capital, len(ledger.positions), fills_today,
+                            ledger.halted, ledger.halt_reason,
+                            extra=f"${ledger.open_premium:,.2f}",
+                            extra_label="Premium at risk")
+
+    @staticmethod
+    def _prices(market: dict[str, MarketData]) -> dict:
+        return {s: float(d.bars["close"].iloc[-1]) for s, d in market.items()
+                if not d.bars.empty}
+
+    def stock_book(self, market: dict[str, MarketData], ledger,
+                   fills_today: int = 0) -> BookSnapshot:
+        equity = ledger.mark_to_market(self._prices(market))
+        return BookSnapshot("Stock desk", equity, ledger.starting_capital,
+                            len(ledger.positions), fills_today,
+                            ledger.halted, ledger.halt_reason,
+                            extra=f"${ledger.cash:,.2f}", extra_label="Cash")
+
+    def standup_payload(self, market, compliance, risk_report, regime_report,
+                        ledger=None, recommendations=None, html_path=None,
+                        new_fills: list | None = None) -> StandupPayload:
+        payload = StandupPayload(
+            mode="Paper" if ledger is not None else "Research",
+            stock_lines=self.stock_desk_lines(market, compliance, risk_report,
+                                              regime_report, ledger, new_fills),
+            inquiries=list(recommendations or []),
+            dashboard=str(html_path) if html_path else "",
+        )
+        if ledger is not None:
+            payload.books.append(self.stock_book(market, ledger, len(new_fills or [])))
+        return payload
 
 
 def _json_default(obj):

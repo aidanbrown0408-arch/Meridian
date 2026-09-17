@@ -209,6 +209,8 @@ class OptionsBroker:
             config, ["options.costs.commission_per_contract"], 0.65))
         # Theo gets the final say on every open. Injectable for tests.
         self.risk_agent = risk_agent or OptionsRiskAgent(config)
+        # Theo's rejections from the most recent execute(), for notifications.
+        self.rejections: list = []
 
     @property
     def halt_floor(self) -> float:
@@ -248,6 +250,7 @@ class OptionsBroker:
         """
         proposals = proposals or []
         prices = prices or {}
+        self.rejections = []
         ledger = self.load_ledger()
         today = datetime.now(timezone.utc)
 
@@ -294,6 +297,7 @@ class OptionsBroker:
         decision = self.risk_agent.evaluate(proposal, list(ledger.positions.values()),
                                             equity)
         if not decision.approved:
+            self.rejections.append(decision)
             log.info("Theo rejected %s %s %g %s: %s", proposal.underlying,
                      proposal.option_type, proposal.strike, proposal.expiration,
                      decision.reason)

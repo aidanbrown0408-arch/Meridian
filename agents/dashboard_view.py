@@ -5,8 +5,8 @@ cached to reports/dashboard_context.json). Everything the tabbed template
 needs beyond that -- account cards, grouped alerts, the strategy roster,
 agent standup cards, The Floor roster -- is derived here, at render time,
 from that context. Deriving at render time (instead of caching the derived
-shapes) means an older cached context still renders, and `paper-options`
-can re-render the page without re-running the stock pipeline.
+shapes) means an older cached context still renders, and the options leg
+of `paper` can re-render the page without re-running the stock pipeline.
 
 Presentation only: nothing here touches a ledger, a signal, or a risk
 decision.

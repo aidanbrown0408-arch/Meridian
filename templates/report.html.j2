@@ -241,7 +241,7 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:28px 0 36px}
     {% else %}
     <div class="card acct none">
       <span class="eyebrow">Options account</span>
-      <p class="empty" style="margin-top:8px">No options run yet. Start with <code>python main.py paper-options</code>.</p>
+      <p class="empty" style="margin-top:8px">No options run yet. Start with <code>python main.py paper</code> (with <code>options.enabled</code> on).</p>
     </div>
     {% endif %}
 
@@ -458,7 +458,7 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:28px 0 36px}
     </div>
     {% endfor %}
   </div>
-  <div class="shdr">Options desk <span class="aside">{{ 'last paper-options run' if options else 'not run yet' }}</span></div>
+  <div class="shdr">Options desk <span class="aside">{{ 'last options run' if options else 'not run yet' }}</span></div>
   {% if v.options_desk %}
   <div class="agrid">
     {% for a in v.options_desk %}
@@ -470,7 +470,7 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:28px 0 36px}
     {% endfor %}
   </div>
   {% else %}
-  <p class="empty">Augustus, Theo and Joseph report here after <code>python main.py paper-options</code>.</p>
+  <p class="empty">Augustus, Theo and Joseph report here after <code>python main.py paper</code>.</p>
   {% endif %}
 </section>
 

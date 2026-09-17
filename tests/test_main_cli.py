@@ -35,6 +35,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main  # noqa: E402
+import utils.notifications as main_notifications  # noqa: E402
 from agents.data_agent import DataAgent, MarketData  # noqa: E402
 from agents.options_broker import OptionsBroker  # noqa: E402
 from agents.options_data_agent import (  # noqa: E402
@@ -83,15 +84,15 @@ def test_options_flag_defaults_false():
     assert args.options is False
 
 
-# ------------------------------------------------------------------ run_paper_options
+# ------------------------------------------------------------------ options leg
 
 
-def test_run_paper_options_is_noop_when_disabled(tmp_path):
+def test_options_leg_is_noop_when_disabled(tmp_path):
     cfg = _options_config(tmp_path, enabled=False)
     assert _run_options_leg(cfg, ["SPY"]) is None
 
 
-def test_run_paper_options_opens_nothing_without_live_data(tmp_path):
+def test_options_leg_opens_nothing_without_live_data(tmp_path):
     """Without network, both Wong and Augustus fall back to synthetic. The
     strategy may well read a signal off a synthetic random walk, but a
     synthetic option chain is never tradable, so it's skipped before a
@@ -106,7 +107,7 @@ def test_run_paper_options_opens_nothing_without_live_data(tmp_path):
     assert not ledger.halted
 
 
-def test_run_paper_options_persists_the_ledger_across_runs(tmp_path):
+def test_options_leg_persists_the_ledger_across_runs(tmp_path):
     cfg = _options_config(tmp_path, enabled=True)
     first = _run_options_leg(cfg, ["SPY"])
     second = _run_options_leg(cfg, ["SPY"])
@@ -137,7 +138,7 @@ def _live_chain(symbol: str, spot: float, expiration: str) -> OptionsChain:
     return OptionsChain(symbol, [expiration], calls, puts, "yfinance", pd.Timestamp.now(tz="UTC"))
 
 
-def test_run_paper_options_opens_a_position_with_live_data(tmp_path, monkeypatch):
+def test_options_leg_opens_a_position_with_live_data(tmp_path, monkeypatch):
     """Force both agents to return real (non-synthetic) data with SPARK
     reading long -- the scenario your own machine hits once yfinance is
     reachable. Proves Joseph actually opens a position through the full
@@ -164,7 +165,7 @@ def test_run_paper_options_opens_a_position_with_live_data(tmp_path, monkeypatch
     assert ledger.cash < ledger.starting_capital  # premium was actually paid
 
 
-def test_run_paper_options_does_not_pyramid_on_a_second_run(tmp_path, monkeypatch):
+def test_options_leg_does_not_pyramid_on_a_second_run(tmp_path, monkeypatch):
     """Same forced-live setup, run twice: the signal stays long both times,
     but the second run must not open a second SPY call."""
     cfg = _options_config(tmp_path, enabled=True)
@@ -252,7 +253,7 @@ def test_route_options_underlyings_ignores_symbols_with_no_signal_today():
     assert routed.netted_positions == report.netted_positions
 
 
-def test_paper_options_cli_mode_is_deprecated_and_no_longer_runs(tmp_path, monkeypatch, capsys):
+def test_paper_options_cli_mode_is_deprecated_and_no_longer_runs(tmp_path, monkeypatch):
     """`python main.py paper-options` used to run a standalone leg; now it
     should refuse and point the operator at `paper` instead, rather than
     silently doing nothing useful."""
@@ -263,6 +264,213 @@ def test_paper_options_cli_mode_is_deprecated_and_no_longer_runs(tmp_path, monke
     rc = main.main(["paper-options"])
     assert rc == 1
     assert called["paper"] is False  # deprecated mode never silently runs the merged pipeline
+
+
+# ------------------------------------------------------------------ options leg: data + compliance
+
+
+def test_options_leg_fetches_underlyings_missing_from_market(tmp_path, monkeypatch):
+    """`paper --symbols AAPL` hands the options leg a market with no SPY in
+    it. The leg must fetch SPY itself rather than silently reading flat."""
+    cfg = _options_config(tmp_path, enabled=True, underlyings=["SPY"])
+    requested = []
+
+    def fake_stock_fetch(self, symbols=None):
+        requested.append(list(symbols or []))
+        return {s: MarketData(s, "stocks", _ramp_bars(), "yfinance",
+                              pd.Timestamp.now(tz="UTC")) for s in symbols}
+
+    monkeypatch.setattr(DataAgent, "fetch_universe", fake_stock_fetch)
+    monkeypatch.setattr(OptionsDataAgent, "fetch_universe", lambda self, symbols=None: {})
+    seen = {}
+
+    def spy_build(config, market, chains, ledger, augustus):
+        seen.update(market)
+        return [], []
+
+    monkeypatch.setattr(main, "build_proposals", spy_build)
+    main._run_options_leg(cfg, {"AAPL": object()})
+    assert requested == [["SPY"]]          # only the missing one is fetched
+    assert "SPY" in seen and "AAPL" in seen  # original market kept, SPY added
+
+
+def test_options_leg_skips_compliance_blocked_underlyings(tmp_path, monkeypatch):
+    """If David blocked SPY this run, the options desk must not open a call
+    on it -- even with live data and SPARK reading long."""
+    cfg = _options_config(tmp_path, enabled=True, underlyings=["SPY"])
+    bars = _ramp_bars()
+    spot = float(bars["close"].iloc[-1])
+    expiration = (date.today() + timedelta(days=30)).isoformat()
+    market = {"SPY": MarketData("SPY", "stocks", bars, "yfinance", pd.Timestamp.now(tz="UTC"))}
+    monkeypatch.setattr(OptionsDataAgent, "fetch_universe",
+                        lambda self, symbols=None: {"SPY": _live_chain("SPY", spot, expiration)})
+
+    ledger = main._run_options_leg(cfg, market, blocked={"SPY": "stale data"})
+    assert ledger.positions == {}
+
+    unblocked = main._run_options_leg(cfg, market)  # sanity: same inputs, unblocked, opens
+    assert len(unblocked.positions) == 1
+
+
+# ------------------------------------------------------------------ run_paper wiring
+
+
+def _stub_run_paper(monkeypatch, tmp_path, market, regime_report, *, options_fails=False):
+    """Stub every agent around run_paper so the test sees exactly what
+    Cornelius, George and the options leg were each handed."""
+    from agents.regime_agent import RegimeAgent
+    from agents.risk_agent import RiskReport
+
+    cfg = _options_config(tmp_path, enabled=True, underlyings=["SPY", "QQQ"])
+    seen: dict = {"order": []}
+
+    class _Lifecycle:
+        def recommend(self, *a, **k):
+            return []
+
+    monkeypatch.setattr(main, "_run_pipeline", lambda config, symbols=None: (
+        market, {}, {"QQQ": "blocked for test"}, type("Leo", (), {"strategies": {}})(),
+        [], {}, RiskReport(), regime_report))
+    monkeypatch.setattr(main, "_lifecycle_step", lambda *a, **k: (_Lifecycle(), {}))
+    monkeypatch.setattr(RegimeAgent, "__init__", lambda self, config: None)
+    monkeypatch.setattr(RegimeAgent, "run", lambda self, *a, **k: regime_report)
+
+    class _Ledger:
+        trader_shadow: dict = {}
+        trades: list = []
+        cash = 5000.0
+        starting_capital = 5000.0
+        positions: dict = {}
+        halted = False
+        halt_reason = ""
+
+        def mark_to_market(self, prices):
+            return 5000.0
+
+    def fake_execute(self, market_, netted, adjustments=None):
+        seen["order"].append("cornelius")
+        seen["cornelius"] = netted
+        return _Ledger()
+
+    def fake_george(self, market_, compliance, results, benchmarks, risk, regime, **k):
+        seen["order"].append("george")
+        seen["george"] = regime.netted_positions
+        return type("Dash", (), {"html_path": None, "posted_to_slack": False,
+                                 "standup_text": ""})()
+
+    def fake_print(*a, **k):
+        seen["order"].append("print")
+
+    def fake_options(config, market_, blocked=None, notifier=None):
+        seen["order"].append("options")
+        seen["options_market"] = market_
+        seen["options_blocked"] = blocked
+        if options_fails:
+            raise RuntimeError("chain fetch exploded")
+
+    monkeypatch.setattr(main.PaperBroker, "execute", fake_execute)
+    monkeypatch.setattr(main, "_warn_on_legacy_share_positions", lambda *a, **k: [])
+    monkeypatch.setattr(main.ReportingAgent, "run", fake_george)
+    monkeypatch.setattr(main, "_print_report", fake_print)
+    monkeypatch.setattr(main, "results_frame", lambda results: pd.DataFrame())
+    monkeypatch.setattr(main, "_options_leg", fake_options)
+    monkeypatch.setattr(main, "_trade_count", lambda broker: 0)
+    monkeypatch.setattr(main.ReportingAgent, "_prices", staticmethod(lambda market_: {}))
+    monkeypatch.setattr(main.ReportingAgent, "standup_payload",
+                        lambda self, *a, **k: main_notifications.StandupPayload(mode="Paper"))
+    return cfg, seen
+
+
+def _report_with_spy_and_aapl():
+    from agents.regime_agent import RegimeReport
+    from agents.risk_agent import NettedPosition
+    return RegimeReport(netted_positions={
+        "SPY": NettedPosition("SPY", 0.4, False, ["SPARK"]),
+        "AAPL": NettedPosition("AAPL", 0.2, False, ["Momentum"]),
+    })
+
+
+def test_run_paper_routes_spy_to_options_and_keeps_the_dashboard_honest(tmp_path, monkeypatch):
+    market = {"SPY": object(), "AAPL": object()}
+    cfg, seen = _stub_run_paper(monkeypatch, tmp_path, market, _report_with_spy_and_aapl())
+    main.run_paper(cfg, post_slack=False)
+
+    assert seen["cornelius"]["SPY"].target_weight == 0.0   # never opened as shares
+    assert seen["cornelius"]["AAPL"].target_weight == 0.2
+    assert seen["george"]["SPY"].target_weight == 0.4      # dashboard shows the real decision
+    assert seen["options_market"] is market                # same bars, not a second read
+    assert seen["options_blocked"] == {"QQQ": "blocked for test"}
+    assert seen["order"] == ["cornelius", "george", "print", "options"]
+
+
+def test_run_paper_survives_an_options_leg_failure(tmp_path, monkeypatch):
+    market = {"SPY": object()}
+    cfg, seen = _stub_run_paper(monkeypatch, tmp_path, market, _report_with_spy_and_aapl(),
+                                options_fails=True)
+    main.run_paper(cfg, post_slack=False)  # must not raise
+    assert seen["order"] == ["cornelius", "george", "print", "options"]
+
+
+def test_run_paper_leaves_spy_as_shares_when_options_disabled(tmp_path, monkeypatch):
+    market = {"SPY": object()}
+    cfg, seen = _stub_run_paper(monkeypatch, tmp_path, market, _report_with_spy_and_aapl())
+    cfg = _options_config(tmp_path, enabled=False)
+    main.run_paper(cfg, post_slack=False)
+    assert seen["cornelius"]["SPY"].target_weight == 0.4
+    assert "options" not in seen["order"]
+
+
+# ------------------------------------------------------------------ leftover shares
+
+
+def test_routing_closes_leftover_spy_shares_and_says_so(tmp_path, caplog):
+    """A zero target is a sell, not a skip: shares bought before routing
+    existed are closed out, and the run logs that it is doing so."""
+    import logging
+    from datetime import datetime, timezone
+
+    from agents.portfolio_agent import PaperBroker, Position
+    from agents.regime_agent import RegimeReport
+    from agents.risk_agent import NettedPosition
+
+    cfg = _options_config(tmp_path, enabled=True, underlyings=["SPY"])
+    broker = PaperBroker(cfg)
+    broker.ledger_path = tmp_path / "paper_ledger.json"
+    ledger = broker.load_ledger()
+    ledger.positions["SPY"] = Position("SPY", "stocks", 5.0, 400.0,
+                                       datetime.now(timezone.utc).date().isoformat())
+    ledger.cash -= 2000.0
+    broker.save_ledger(ledger)
+
+    bars = _ramp_bars(n=5, start=400.0)
+    market = {"SPY": MarketData("SPY", "stocks", bars, "test", pd.Timestamp.now(tz="UTC"))}
+    report = RegimeReport(netted_positions={"SPY": NettedPosition("SPY", 0.4, False, ["SPARK"])})
+
+    with caplog.at_level(logging.WARNING):
+        legacy = main._warn_on_legacy_share_positions(broker, market, {"SPY"})
+    assert legacy == ["SPY"]
+    assert any("leftover share" in r.getMessage() for r in caplog.records)
+
+    routed = main._route_options_underlyings(report, {"SPY"})
+    after = broker.execute(market, routed.netted_positions, [])
+    assert "SPY" not in after.positions
+
+
+def test_allocation_report_marks_routed_symbols(capsys):
+    """Regression: the console allocation table must render (not NameError)
+    when there are target positions, and flag the options-routed ones."""
+    from agents.regime_agent import RegimeReport
+    from agents.risk_agent import NettedPosition, RiskReport
+
+    report = RegimeReport(netted_positions={
+        "SPY": NettedPosition("SPY", 0.4, False, ["SPARK"]),
+        "BTC/USDT": NettedPosition("BTC/USDT", 0.2, False, ["Momentum"]),
+    })
+    main._print_allocation(RiskReport(), report, {"SPY"})
+    out = capsys.readouterr().out
+    assert "SPY" in out and "-> options desk, not shares" in out
+    btc_line = next(l for l in out.splitlines() if "BTC/USDT" in l)
+    assert "options desk" not in btc_line
 
 
 if __name__ == "__main__":

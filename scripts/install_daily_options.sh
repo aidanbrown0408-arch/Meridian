@@ -1,6 +1,6 @@
 #!/bin/bash
-# Install (or remove) a launchd job that runs the options paper-trading
-# check every weekday at 4:15 PM local time (after the US close, so SPARK
+# Install (or remove) a launchd job that runs `main.py paper` (stock desk +
+# options leg) every weekday at 4:15 PM local time (after the US close, so SPARK
 # sees a finished daily bar).
 #
 #   bash scripts/install_daily_options.sh            # install / reinstall
@@ -8,6 +8,8 @@
 #   launchctl kickstart gui/$(id -u)/com.meridian.paper-options   # run now
 set -euo pipefail
 
+# Label and log name kept from the old standalone options job so an existing
+# install keeps working without a reinstall.
 LABEL="com.meridian.paper-options"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"

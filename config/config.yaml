@@ -75,8 +75,9 @@ risk:
   risk_free_rate: 0.0
   
 options:
-  # Master switch. If false, `paper-options` mode exits cleanly without doing 
-  # anything. Existing stock pipeline (`research`, `paper`) is unaffected.
+  # Master switch. If true, `paper` never opens SPY/QQQ (the underlyings below)
+  # as shares -- the options desk acts on them instead, right after the stock
+  # fills. If false, `paper` trades them as shares and skips the options leg.
   enabled: true
   
   ledger_path: reports/options_ledger.json
@@ -214,7 +215,19 @@ slack:
   # purpose -- set the MERIDIAN_SLACK_WEBHOOK_URL environment variable
   # rather than committing a real webhook URL to config.
   webhook_url_env: MERIDIAN_SLACK_WEBHOOK_URL
+  # Optional second channel for urgent messages (halts, run failures). If the
+  # variable isn't set, those go to the main channel too.
+  alerts_webhook_url_env: MERIDIAN_SLACK_ALERTS_WEBHOOK_URL
+  # Optional: a URL where the dashboard is hosted. If empty, the standup
+  # footer shows the local file path instead of a link.
+  dashboard_url: ""
   post_daily_standup: true
+  # Turn individual message types on/off (see utils/notifications.py).
+  notify:
+    trades: true            # every stock fill / options open, close, expiry, Theo rejection
+    halts: true             # killswitch pulls and the options loss cutoff
+    failures: true          # a paper/research run or the options leg crashed
+    operator_actions: true  # clear-halt, bench, unbench
 
 visual: 
   # Spec §12 — classic Wall Street: navy/gold, serif.

@@ -50,15 +50,37 @@ Optional flags: `--symbols SPY QQQ`, `--config path/to/config.yaml`, `--no-slack
 `--verbose`. `bench`/`unbench` also take `--trigger drift` for a live-drift bench,
 which (unlike a validation-fail bench) never auto-reinstates.
 
-To actually post the daily standup to Slack, set `MERIDIAN_SLACK_WEBHOOK_URL` in the
-environment before running — without it, the message is logged, not sent, and the run
-still succeeds. The HTML dashboard always writes to `reports/meridian_YYYYMMDD.html`
+To post to Slack, set `MERIDIAN_SLACK_WEBHOOK_URL` in the environment before running.
+Without it, messages are logged, not sent, and the run still succeeds. The HTML dashboard always writes to `reports/meridian_YYYYMMDD.html`
 and `reports/latest.html`; the paper ledger persists to `reports/paper_ledger.json` and
 the bench state to `reports/bench_state.json` (all gitignored).
 
-### Daily options run (macOS launchd)
+### Slack notifications
 
-`python main.py paper-options` can run itself every weekday at 4:15 PM local time
+Everything Meridian says goes through `utils/notifications.py` as formatted Slack
+(Block Kit) messages:
+
+| Message | When |
+|---|---|
+| **Daily standup** | End of every weekday `paper`/`research` run: a scoreboard for the stock desk and options desk, one line from each agent, and any bench/unbench inquiries waiting on you |
+| **Stock fills** | Any run where Cornelius bought or sold |
+| **Options activity** | Any run where Joseph opened, closed or expired a contract, or Theo rejected a proposal |
+| **Halt** 🚨 | `killswitch` (either desk), or the options bucket hitting its loss cutoff |
+| **Halt cleared / operator action** | `clear-halt`, `bench`, `unbench` |
+| **Run failed** ❌ | A `paper`/`research` run or the options leg crashed (includes the traceback tail) |
+
+Optional: set `MERIDIAN_SLACK_ALERTS_WEBHOOK_URL` to send halts and failures to a
+separate channel; set `slack.dashboard_url` to make the standup footer a link. Each
+message type can be turned off under `slack.notify` in `config/config.yaml`.
+`--no-slack` silences everything for one run. The test suite never posts
+(`tests/conftest.py` clears the webhook variables).
+
+### Daily paper run (macOS launchd)
+
+Options no longer have their own run: when `options.enabled` is on, `python main.py paper`
+routes SPY/QQQ to the options desk (never opened as shares) and runs the options leg
+right after the stock fills. `python main.py paper-options` now just exits with an error
+pointing here. `python main.py paper` can run itself every weekday at 4:15 PM local time
 (after the US close, so SPARK reads a finished daily bar):
 
 ```bash

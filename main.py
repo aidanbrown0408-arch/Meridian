@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime
 
 import pandas as pd
@@ -58,6 +59,7 @@ from agents.risk_agent import RiskAgent, RiskReport
 from backtester.engine import results_frame
 from strategies.options_strategy import SignalCheck, build_proposals
 from utils.config import load_config
+from utils.notifications import DeskLine, Notifier
 from utils.logging_setup import get_logger, setup_logging
 
 log = get_logger("orchestrator")
@@ -176,15 +178,19 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
     # SPARK signal) is handed to Augustus/Theo/Joseph instead.
     options_underlyings = set(config.get("options.underlyings", [])) \
         if config.get("options.enabled", False) else set()
-    stock_regime_report = (_route_options_underlyings(regime_report, options_underlyings)
-                           if options_underlyings else regime_report)
 
+    notifier = Notifier(config, enabled=post_slack)
     cornelius = PaperBroker(config)
-    ledger = cornelius.execute(market, stock_regime_report.netted_positions,
-                               stock_regime_report.adjustments)
-
+    fills_before = _trade_count(cornelius)
+    stock_positions = regime_report.netted_positions
     if options_underlyings:
-        _run_options_leg(config, market)
+        stock_positions = _route_options_underlyings(regime_report, options_underlyings
+                                                     ).netted_positions
+        _warn_on_legacy_share_positions(cornelius, market, options_underlyings)
+    ledger = cornelius.execute(market, stock_positions, regime_report.adjustments)
+    new_fills = ledger.trades[fills_before:]
+    stock_prices = ReportingAgent._prices(market)
+    notifier.stock_fills(new_fills, ledger.mark_to_market(stock_prices), ledger.cash)
 
     predicted_sharpe = {}
     for c in risk_report.candidates:
@@ -192,15 +198,58 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
             predicted_sharpe[c.strategy] = max(predicted_sharpe.get(c.strategy, 0.0), c.sharpe)
     recommendations = lifecycle.recommend(state, predicted_sharpe, ledger.trader_shadow)
 
+    # George and the console report get the UNROUTED regime report, so the
+    # dashboard still shows what the desk actually agreed on for SPY/QQQ.
+    # Only Cornelius sees the zeroed weights.
     george = ReportingAgent(config)
     dashboard = george.run(market, compliance, results, benchmarks, risk_report,
-                           stock_regime_report, ledger=ledger, recommendations=recommendations,
-                           post_slack=post_slack)
+                           regime_report, ledger=ledger, recommendations=recommendations,
+                           post_slack=False)  # standup is posted below, once options has run
+    dashboard.posted_to_slack = None
 
     frame = results_frame(results)
     _print_report(config, market, frame, benchmarks, blocked, risk_report,
-                  stock_regime_report, dashboard, recommendations, ledger=ledger)
+                  regime_report, dashboard, recommendations, ledger=ledger)
+
+    # The options leg runs last: stock fills are already saved and the stock
+    # report already printed, so an options failure can never hide them.
+    # It prints its own report and refreshes the options section of
+    # latest.html itself.
+    payload = george.standup_payload(market, compliance, risk_report, regime_report,
+                                     ledger, recommendations, dashboard.html_path,
+                                     new_fills=new_fills)
+    if options_underlyings:
+        try:
+            leg = _options_leg(config, market, blocked=blocked, notifier=notifier)
+            if leg is not None:
+                payload.options_lines = leg.lines
+                payload.books.append(leg.book)
+        except Exception as exc:
+            log.exception("Options leg failed -- stock fills and the stock report "
+                          "above are unaffected; the options ledger was not updated "
+                          "past the point of failure.")
+            notifier.failure("Options leg", exc, impact=(
+                "Stock fills and the stock report are unaffected. The options ledger "
+                "was not updated past the point of failure."))
+            payload.options_lines = [DeskLine(
+                "\U0001F3AF", "Joseph", "Options Execution",
+                f"Options leg failed this run ({type(exc).__name__}) — see the alert.",
+                "bad")]
+
+    if post_slack:
+        posted = notifier.standup(payload)
+        print(f"  Slack: standup {'posted' if posted else 'not posted (see log)'}, "
+              f"{len(notifier.sent)} message(s) sent this run.\n")
     return frame
+
+
+def _trade_count(broker) -> int:
+    """How many trades a ledger already holds, so this run's new ones can be
+    sliced off afterwards. A broken ledger is execute()'s problem to report."""
+    try:
+        return len(broker.load_ledger().trades)
+    except Exception:
+        return 0
 
 
 # ------------------------------------------------------------------ options routing
@@ -222,7 +271,42 @@ def _route_options_underlyings(regime_report: RegimeReport, underlyings: set[str
     return dataclasses.replace(regime_report, netted_positions=netted)
 
 
-def _run_options_leg(config, market: dict, checks_only: bool = False):
+def _warn_on_legacy_share_positions(cornelius: PaperBroker, market: dict,
+                                    underlyings: set[str]) -> list[str]:
+    """Routing zeroes SPY/QQQ's target weight, and a zero target means
+    Cornelius SELLS any shares still held there. That is intentional -- the
+    options desk now owns those symbols, so leftover shares from before the
+    routing change are closed out -- but it should never happen silently."""
+    try:
+        held = cornelius.load_ledger().positions
+    except Exception:
+        return []  # execute() will raise its own, clearer error
+    legacy = sorted(s for s in underlyings
+                    if s in held and s in market and held[s].shares != 0)
+    for symbol in legacy:
+        log.warning("%s: closing %.4f leftover share(s) on the stock ledger -- %s "
+                    "is routed to the options desk, so it is no longer held as shares.",
+                    symbol, held[symbol].shares, symbol)
+    return legacy
+
+
+@dataclass
+class OptionsLegResult:
+    ledger: object
+    lines: list = field(default_factory=list)   # DeskLine, for the standup
+    book: object = None                         # BookSnapshot, for the standup
+    new_trades: list = field(default_factory=list)
+
+
+def _run_options_leg(config, market: dict, blocked: dict | None = None,
+                     notifier: Notifier | None = None):
+    """The options leg, returning just Joseph's ledger (None if disabled)."""
+    leg = _options_leg(config, market, blocked=blocked, notifier=notifier)
+    return leg.ledger if leg is not None else None
+
+
+def _options_leg(config, market: dict, blocked: dict | None = None,
+                 notifier: Notifier | None = None) -> OptionsLegResult | None:
     """Augustus -> the SPARK-calls strategy -> Theo -> Joseph, reusing the
     SAME `market` dict Wong already fetched for the live stock pipeline
     this run -- not a second, independent read of the bars. This is what
@@ -231,8 +315,14 @@ def _run_options_leg(config, market: dict, checks_only: bool = False):
 
     Strategy itself is untouched (`strategies/options_strategy.py`, same
     SPARK read as before). Only the trigger for calling this moved -- it
-    now fires inside `run_paper`, at the moment Cornelius would otherwise
-    have acted on SPY/QQQ, instead of on its own daily schedule.
+    now fires inside `run_paper`, right after Cornelius, instead of on its
+    own daily schedule.
+
+    Any configured underlying missing from `market` (e.g. `paper --symbols
+    AAPL`, or SPY/QQQ dropped from `universe`) is fetched here so the signal
+    is never silently read as flat. Any underlying David blocked this run is
+    dropped from the market handed to the strategy, so it reads flat and
+    nothing is opened on it -- same rule the stock desk follows.
     """
     if not config.get("options.enabled", False):
         log.warning("options.enabled is false in config -- the options leg is a "
@@ -240,6 +330,20 @@ def _run_options_leg(config, market: dict, checks_only: bool = False):
         return None
 
     underlyings = list(config.get("options.underlyings"))
+    blocked = blocked or {}
+
+    missing = [u for u in underlyings if u not in market]
+    if missing:
+        log.info("Options underlyings not in this run's market data, fetching: %s",
+                 ", ".join(missing))
+        fetched = DataAgent(config).fetch_universe(missing)
+        market = {**market, **{s: d for s, d in fetched.items() if s in missing}}
+
+    for symbol in underlyings:
+        if symbol in blocked:
+            log.warning("%s is blocked by compliance (%s) -- no options entry today.",
+                        symbol, blocked[symbol])
+    market = {s: d for s, d in market.items() if s not in blocked}
 
     augustus = OptionsDataAgent(config)
     chains = augustus.fetch_universe(underlyings)
@@ -252,9 +356,20 @@ def _run_options_leg(config, market: dict, checks_only: bool = False):
     # underlying at a time) -- read-only, Joseph's execute() below is
     # still the only thing that writes it.
     current = joseph.load_ledger()
+    trades_before, was_halted = len(current.trades), current.halted
     proposals, checks = build_proposals(config, market, chains, current, augustus)
 
     ledger = joseph.execute(proposals=proposals, prices=prices)
+    new_trades = ledger.trades[trades_before:]
+    rejections = list(joseph.rejections)
+
+    if notifier is not None:
+        notifier.options_activity(new_trades, rejections, ledger.mark_to_market(prices),
+                                  ledger.cash, ledger.open_premium)
+        if ledger.halted and not was_halted:
+            notifier.halt("Options desk", ledger.halt_reason, detail=(
+                f"Loss cutoff is {joseph.loss_cutoff_pct:.0%} of the "
+                f"${joseph.starting_capital:,.0f} bucket (floor ${joseph.halt_floor:,.2f})."))
 
     _print_options_report(chains, ledger, prices, checks)
 
@@ -267,7 +382,11 @@ def _run_options_leg(config, market: dict, checks_only: bool = False):
         print(f"    Dashboard updated: {path}")
     except Exception as exc:
         log.warning("Options dashboard refresh failed (%s) -- ledger is unaffected.", exc)
-    return ledger
+
+    lines = ReportingAgent.options_desk_lines(chains, checks, proposals, rejections,
+                                              new_trades, ledger, prices)
+    book = ReportingAgent.options_book(ledger, prices, fills_today=len(new_trades))
+    return OptionsLegResult(ledger, lines, book, new_trades)
 
 
 def _print_options_report(chains: dict, ledger, prices: dict,
@@ -367,8 +486,11 @@ def _print_report(config, market, frame: pd.DataFrame, benchmarks: dict,
               f"MaxDD {summary.max_drawdown * 100:6.2f}%")
 
     _print_validation(config, risk_report)
+    options_routed = (set(config.get("options.underlyings", []))
+                      if ledger is not None and config.get("options.enabled", False)
+                      else set())
     _print_regime(regime_report)
-    _print_allocation(risk_report, regime_report)
+    _print_allocation(risk_report, regime_report, options_routed)
     _print_lifecycle(recommendations)
     if ledger is not None:
         _print_ledger(market, ledger)
@@ -381,7 +503,8 @@ def _print_report(config, market, frame: pd.DataFrame, benchmarks: dict,
     print("\n  DASHBOARD (George)")
     if dashboard.html_path is not None:
         print(f"    HTML report: {dashboard.html_path}")
-    print(f"    Slack: {'posted' if dashboard.posted_to_slack else 'not posted (see log above)'}")
+    if dashboard.posted_to_slack is not None:
+        print(f"    Slack: {'posted' if dashboard.posted_to_slack else 'not posted (see log above)'}")
     print("    Standup message:")
     for line in dashboard.standup_text.splitlines():
         print(f"      {line}")
@@ -417,7 +540,9 @@ def _print_validation(config, risk_report: RiskReport) -> None:
         print("    This is deliberate: no delivery is worse than 'nothing today.'")
 
 
-def _print_allocation(risk_report: RiskReport, regime_report: RegimeReport) -> None:
+def _print_allocation(risk_report: RiskReport, regime_report: RegimeReport,
+                      options_routed: set[str] | None = None) -> None:
+    options_routed = options_routed or set()
     print(f"\n  RISK & ALLOCATION (Charles + Greg) — {len(risk_report.live_traders) or 0} of "
           f"{len(risk_report.live_traders) + len(risk_report.benched_traders)} traders live")
     if risk_report.live_traders:
@@ -450,8 +575,10 @@ def _print_allocation(risk_report: RiskReport, regime_report: RegimeReport) -> N
             if not pos.contributors:
                 continue
             cap = "  (capped)" if pos.capped else ""
+            routed = ("  -> options desk, not shares"
+                      if symbol in options_routed else "")
             print(f"    {symbol:<10} {pos.target_weight * 100:5.1f}% of capital"
-                  f"{cap}  <- {', '.join(pos.contributors)}")
+                  f"{cap}  <- {', '.join(pos.contributors)}{routed}")
     else:
         print("\n    No target positions today.")
 
@@ -498,7 +625,10 @@ def run_killswitch(config, symbols: list[str] | None = None, options: bool = Fal
             log.warning("Could not fetch live option prices for killswitch (%s) -- "
                        "flattening open positions at their entry premium instead.", exc)
             prices = {}
+        before = OptionsBroker(config).load_ledger()
         OptionsBroker(config).killswitch(prices)
+        Notifier(config).halt("Options desk", "Operator killswitch", manual=True, detail=(
+            f"Flattened {len(before.positions)} open position(s)."))
         return 0
 
     wong = DataAgent(config)
@@ -509,15 +639,20 @@ def run_killswitch(config, symbols: list[str] | None = None, options: bool = Fal
                    "last known entry prices instead.", exc)
         market = {}
     cornelius = PaperBroker(config)
+    open_before = len(cornelius.load_ledger().positions)
     cornelius.killswitch(market)
+    Notifier(config).halt("Stock desk", "Operator killswitch", manual=True, detail=(
+        f"Flattened {open_before} open position(s)."))
     return 0
 
 
 def run_clear_halt(config, options: bool = False) -> int:
     if options:
         OptionsBroker(config).clear_halt()
+        Notifier(config).halt_cleared("Options desk")
         return 0
     PaperBroker(config).clear_halt()
+    Notifier(config).halt_cleared("Stock desk")
     return 0
 
 
@@ -526,6 +661,9 @@ def run_bench(config, trader: str | None, trigger: str, reason: str, unbench: bo
         log.error("--trader is required for %s.", "unbench" if unbench else "bench")
         return 2
     lifecycle = LifecycleAgent(config)
+    Notifier(config).operator_action(
+        "Unbenched" if unbench else "Benched",
+        f"{trader} ({trigger})" + (f" — {reason}" if reason and not unbench else ""))
     if trigger == "validation":
         if unbench:
             lifecycle.clear_validation_bench(trader)
@@ -574,17 +712,23 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(BANNER)
 
-    if args.mode == "research":
-        run_research(config, args.symbols, post_slack=not args.no_slack)
-        return 0
-    if args.mode == "paper":
-        run_paper(config, args.symbols, post_slack=not args.no_slack)
+    if args.mode in ("research", "paper"):
+        runner = run_research if args.mode == "research" else run_paper
+        try:
+            runner(config, args.symbols, post_slack=not args.no_slack)
+        except Exception as exc:
+            log.exception("%s run failed.", args.mode)
+            Notifier(config, enabled=not args.no_slack).failure(
+                f"{args.mode.capitalize()} run", exc,
+                impact="Anything saved before the failure (e.g. stock fills) is kept; "
+                       "nothing after it ran. Check the log, fix, and re-run.")
+            return 1
         return 0
     if args.mode == "paper-options":
-        log.warning("`paper-options` no longer runs standalone -- SPY/QQQ options "
-                   "trades now fire inside `python main.py paper`, at the same "
-                   "moment the stock desk would otherwise have opened them as "
-                   "shares. Run `python main.py paper` instead.")
+        log.error("`paper-options` no longer runs standalone -- SPY/QQQ options "
+                  "entries now run inside `python main.py paper`, right after the "
+                  "stock fills. Run `python main.py paper` instead (the launchd "
+                  "job in scripts/ already does).")
         return 1
     if args.mode == "killswitch":
         return run_killswitch(config, args.symbols, options=args.options)
