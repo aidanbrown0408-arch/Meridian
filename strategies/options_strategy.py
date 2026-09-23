@@ -11,10 +11,30 @@ params, never a change to `strategies/spark.py` or the stock backtester.
 Reading bars here is read-only either way: this module never proposes,
 opens, or touches anything on the $5,000 stock ledger.
 
-No walk-forward gate, no eligibility check, on purpose (see Theo's
-docstring in `agents/options_risk_agent.py`): for long-only, capped-loss
-options at this account size, the risk model IS the caps, and Theo is the
-only thing standing between a signal and an open position.
+Market gate (added after Phase B2): before EITHER direction's signal is
+even allowed to become a proposal, `_market_gates()` requires two things
+on that underlying, run fresh every time this module is called:
+  1. Greg's regime read is "trending" — a Donchian breakout/breakdown is a
+     trend-following mechanic (this is SPARK's own `best_regimes`) and is
+     expected to whipsaw in chop, so "choppy" and "undecided" both block.
+  2. SPARK clears Charles's own walk-forward + drawdown grading on that
+     specific underlying — reusing `RiskAgent._grade()` verbatim so this
+     never silently drifts from what the stock side considers "validated."
+     Run fresh here rather than read off Charles's live stock roster, so
+     the options desk's answer never depends on whether SPARK happens to
+     be one of today's 3 live STOCK traders — an unrelated capital-roster
+     decision on a completely separate ledger.
+Both checks apply identically to calls and puts: it's the same Donchian
+mechanism on the same underlying, just mirrored, so it's trusted (or not)
+the same way in both directions. Toggle with
+`options.strategy.market_gate_enabled: false` to fall back to Theo's caps
+alone (the original Phase B/B2 behavior).
+
+Once a signal clears the gate, Theo is still the only thing standing
+between it and an open position (see Theo's docstring in
+`agents/options_risk_agent.py`) — the gate answers "should this even be
+considered," not "is it sized/capped correctly," which stays entirely
+Theo's job.
 
 Entry rules, deliberately simple and symmetric:
   * Call: SPARK's live signal (today's decision — `generate_signals(bars)
@@ -51,6 +71,10 @@ from agents.data_agent import MarketData
 from agents.options_broker import OptionsLedger
 from agents.options_data_agent import OptionsChain, OptionsDataAgent
 from agents.options_risk_agent import OptionsProposal
+from agents.regime_agent import RegimeAgent
+from agents.risk_agent import RiskAgent, TraderCandidate
+from backtester.engine import BacktestEngine
+from backtester.walkforward import WalkForwardValidator
 from strategies.base import Strategy, build_strategies
 from utils.config import Config
 from utils.logging_setup import get_logger
@@ -68,7 +92,21 @@ class SignalCheck:
     trigger: str
     signal_long: bool
     detail: str
-    direction: str = "call"   # "call" | "put"
+    direction: str = "call"      # "call" | "put"
+    gate_passed: bool = True     # today's regime/validation read, see MarketGate
+    gate_detail: str = ""
+
+
+@dataclass
+class MarketGate:
+    """One underlying's pre-signal verdict: has today's market actually
+    earned the right to be traded, independent of which direction (if any)
+    is signaling. See the "Market gate" section of the module docstring."""
+
+    underlying: str
+    regime: str
+    passed: bool
+    reason: str
 
 
 def _donchian_breakdown(bars: pd.DataFrame, entry_window: int, exit_window: int) -> pd.Series:
@@ -173,6 +211,77 @@ def check_put_signals(config: Config, market: dict[str, MarketData]) -> list[Sig
     return checks
 
 
+def _market_gates(config: Config, market: dict[str, MarketData],
+                  underlyings: list[str]) -> dict[str, MarketGate]:
+    """Today's trending-regime + walk-forward-validation verdict for every
+    configured underlying. Returns a gate for exactly the underlyings Wong
+    actually has data for; a symbol missing from `market` simply has no
+    entry (callers treat that as blocked — see `_propose_one`).
+
+    Deliberately re-runs Greg's classifier and Charles's grading fresh on
+    each call rather than reading Charles's/Greg's own daily RiskReport/
+    RegimeReport (which only cover the stock side's already-chosen live
+    roster) — this way the options desk's answer depends only on today's
+    market and SPARK's own track record on that ticker, never on whether
+    SPARK happens to be one of the 3 stock traders Charles picked today.
+
+    Returns an empty dict outright if `options.strategy.market_gate_enabled`
+    is false, or if the configured trigger isn't a registered strategy."""
+    if not bool(config.get("options.strategy.market_gate_enabled", True)):
+        return {}
+
+    trigger_callsign = str(config.get("options.strategy.trigger_strategy", "SPARK"))
+    trigger = build_strategies(config).get(trigger_callsign)
+    if trigger is None:
+        return {}
+
+    regime_agent = RegimeAgent(config)
+    charles = RiskAgent(config)
+    validator = WalkForwardValidator(config)
+    engine = BacktestEngine(config)
+
+    gates: dict[str, MarketGate] = {}
+    for symbol in underlyings:
+        data = market.get(symbol)
+        if data is None or data.bars.empty:
+            continue
+
+        classification = regime_agent.classify(data.bars, symbol)
+        if classification.regime != "trending":
+            gates[symbol] = MarketGate(
+                symbol, classification.regime, False,
+                f"regime is {classification.regime}, not trending ({classification.detail})")
+            continue
+
+        bt = engine.run(trigger, data.bars, symbol, asset_class=data.asset_class,
+                        data_source=data.data_source)
+        if bt.blocked:
+            gates[symbol] = MarketGate(
+                symbol, classification.regime, False,
+                f"trending, but {trigger_callsign} has insufficient history to grade "
+                f"({bt.block_reason})")
+            continue
+
+        wf = validator.validate(trigger, data.bars, symbol, data.asset_class)
+        candidate = TraderCandidate(
+            strategy=trigger_callsign, symbol=symbol, asset_class=data.asset_class,
+            walkforward=wf, backtest_max_drawdown=bt.summary.max_drawdown,
+            annual_vol=bt.summary.annual_vol, sharpe=bt.summary.sharpe,
+        )
+        # Reuse Charles's own grading verbatim (walk-forward pass/fail, then
+        # the hard full-period drawdown cap) so this can never silently
+        # drift from what "validated" means on the stock side.
+        eligible, reject_reason = charles._grade(candidate)
+        if not eligible:
+            gates[symbol] = MarketGate(
+                symbol, classification.regime, False,
+                f"trending, but {trigger_callsign} fails validation: {reject_reason}")
+        else:
+            gates[symbol] = MarketGate(symbol, classification.regime, True,
+                                       "trending & validated")
+    return gates
+
+
 def _propose_one(config: Config, check: SignalCheck, market: dict[str, MarketData],
                  chains: dict[str, OptionsChain], augustus: OptionsDataAgent,
                  open_underlyings: set[str], min_dte: int, today: date,
@@ -181,6 +290,10 @@ def _propose_one(config: Config, check: SignalCheck, market: dict[str, MarketDat
     """Shared plumbing for turning one active SignalCheck into an
     OptionsProposal, whichever side of the chain it reads from."""
     if not check.signal_long:
+        return None
+    if not check.gate_passed:
+        log.info("%s: %s active but blocked by today's market gate — %s",
+                 check.underlying, check.trigger, check.gate_detail)
         return None
     if check.underlying in open_underlyings:
         log.info("%s: %s active but a position is already open — holding, not "
@@ -245,6 +358,20 @@ def build_proposals(config: Config, market: dict[str, MarketData],
     time, by design (see module docstring)."""
     call_checks = check_signals(config, market)
     put_checks = check_put_signals(config, market)
+
+    underlyings = list(config.get("options.underlyings"))
+    gates = _market_gates(config, market, underlyings)
+    for c in (*call_checks, *put_checks):
+        gate = gates.get(c.underlying)
+        if gate is not None:
+            c.gate_passed = gate.passed
+            c.gate_detail = gate.reason
+        # A symbol missing from `gates` (e.g. Wong has no data for it, or
+        # the gate is disabled) reads as gate_passed=True, its default —
+        # "no opinion" never blocks on its own; the earlier per-symbol
+        # data checks in check_signals/check_put_signals already handle a
+        # genuinely missing underlying.
+
     # Interleave per underlying (call read, then put read) so the console/
     # dashboard reports both directions together for each name.
     put_by_symbol = {c.underlying: c for c in put_checks}

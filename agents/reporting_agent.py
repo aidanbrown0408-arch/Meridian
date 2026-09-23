@@ -163,7 +163,8 @@ class ReportingAgent:
             "recent_trades": trades,
             "signals": [{"underlying": c.underlying, "trigger": c.trigger,
                          "signal_long": bool(c.signal_long), "detail": c.detail,
-                         "direction": c.direction}
+                         "direction": c.direction, "gate_passed": bool(c.gate_passed),
+                         "gate_detail": c.gate_detail}
                         for c in (checks or [])],
             "chains": [{"underlying": sym, "expirations": len(ch.expirations),
                         "calls": len(ch.calls), "puts": len(ch.puts),
@@ -503,14 +504,16 @@ class ReportingAgent:
             if active:
                 reads = ", ".join(
                     f"{c.underlying} {'CALL' if c.direction == 'call' else 'PUT'}"
+                    + ("" if c.gate_passed else " (gated out)")
                     for c in active)
             else:
                 seen_underlyings = list(dict.fromkeys(c.underlying for c in checks))
                 reads = ", ".join(f"{s} flat" for s in seen_underlyings)
+            any_tradable = any(c.gate_passed for c in active)
             trigger_label = next((c.trigger for c in checks if c.direction == "call"),
                                  checks[0].trigger)
             lines.append(DeskLine("\u26A1", trigger_label, "Signal",
-                                  f"{reads}.", "good" if active else "info"))
+                                  f"{reads}.", "good" if any_tradable else "info"))
 
         if proposals or rejections:
             approved = len(proposals) - len(rejections)
@@ -522,8 +525,14 @@ class ReportingAgent:
             lines.append(DeskLine("\U0001F6E1\uFE0F", "Theo", "Options Risk", text + ".",
                                   "warn" if rejections else "info"))
         else:
-            active_names = [c.underlying for c in checks if c.signal_long]
-            if active_names:
+            gate_blocked = sorted({c.underlying for c in checks
+                                   if c.signal_long and not c.gate_passed})
+            active_names = [c.underlying for c in checks
+                            if c.signal_long and c.gate_passed]
+            if gate_blocked:
+                text = (f"No proposals — {', '.join(gate_blocked)} signalled but "
+                        f"didn't clear today's regime/validation gate.")
+            elif active_names:
                 verb = "has" if len(active_names) == 1 else "have"
                 text = (f"No proposals — {', '.join(active_names)} signalled but "
                         f"{verb} no tradable chain or a position already open.")

@@ -21,7 +21,7 @@ from agents.options_data_agent import (  # noqa: E402
     CHAIN_COLUMNS, OptionsChain, OptionsDataAgent,
 )
 from strategies.options_strategy import (  # noqa: E402
-    build_proposals, check_put_signals, check_signals,
+    _market_gates, build_proposals, check_put_signals, check_signals,
 )
 from utils.config import Config, load_config  # noqa: E402
 
@@ -31,10 +31,25 @@ AUGUSTUS = OptionsDataAgent(CONFIG)
 
 def _config_with(**overrides) -> Config:
     """A Config copy with one or more `options.strategy.*` keys overridden --
-    for toggling `puts_enabled` without touching the real config file."""
+    for toggling `puts_enabled`/`market_gate_enabled` without touching the
+    real config file."""
     data = CONFIG.as_dict()
     data["options"]["strategy"].update(overrides)
     return Config(data)
+
+
+# The synthetic fixtures below (_ramp/_falling/_flat) are short, clean, and
+# built purely to pin down signal/proposal mechanics -- not to land in any
+# particular regime. Empirically (verified against the real RegimeAgent/
+# RiskAgent) a 60-bar _ramp reads "undecided" (its % volatility shrinks as
+# price compounds up, starving the vol-percentile check) and a 60-bar
+# _falling reads "trending" but 0/5 walk-forward folds (SPARK never trades
+# on a series that only ever falls). Either way the market gate (added
+# after Phase B2, see "Market gate" in the module docstring) would block
+# them, which is correct behavior but not what these particular tests are
+# about -- they use GATE_OFF so gate behavior stays confined to its own
+# section below.
+GATE_OFF = _config_with(market_gate_enabled=False)
 
 
 # ------------------------------------------------------------------ fixtures
@@ -69,6 +84,37 @@ def _falling(n: int = 60, start: float = 440.0, step: float = 1.0) -> pd.DataFra
     return pd.DataFrame({"open": close, "high": close * 1.001,
                          "low": close * 0.999, "close": close,
                          "volume": 1e6}, index=index)
+
+
+def _trend(n: int = 400, start: float = 100.0, annual_drift: float = 0.6,
+          annual_vol: float = 0.25, seed: int = 11) -> pd.DataFrame:
+    """Same fixture as `tests/test_phase3.py` -- a geometric random walk with
+    upward drift, realistic enough that % vol stays roughly stationary.
+    Classifies trending per Greg (see `test_regime_classifies_a_clean_trend_
+    as_trending` in test_phase3.py); whether SPARK also clears Charles's
+    walk-forward grading on a given seed/drift varies -- the default
+    (seed=11, drift=0.6) does NOT clear it, seed=15/drift=0.9 does (verified
+    empirically), which is exactly the trending-but-unvalidated vs.
+    trending-and-validated split the gate tests below need."""
+    rng = np.random.default_rng(seed)
+    index = pd.bdate_range(end=pd.Timestamp("2026-01-01"), periods=n)
+    daily_vol = annual_vol / np.sqrt(252)
+    daily_drift = annual_drift / 252 - 0.5 * daily_vol ** 2
+    close = start * np.exp(np.cumsum(rng.normal(daily_drift, daily_vol, n)))
+    return pd.DataFrame({"open": close, "high": close * 1.003, "low": close * 0.997,
+                         "close": close, "volume": 1e6}, index=index)
+
+
+def _chop(n: int = 400, base: float = 100.0, amp: float = 4.0, period: int = 8,
+         seed: int = 3) -> pd.DataFrame:
+    """Same fixture as `tests/test_phase3.py` -- a tight, fast-oscillating
+    bounce. Classifies choppy per Greg."""
+    rng = np.random.default_rng(seed)
+    index = pd.bdate_range(end=pd.Timestamp("2026-01-01"), periods=n)
+    t = np.arange(n)
+    close = base + amp * np.sin(2 * np.pi * t / period) + rng.normal(0, 0.2, n)
+    return pd.DataFrame({"open": close, "high": close * 1.003, "low": close * 0.997,
+                         "close": close, "volume": 1e6}, index=index)
 
 
 def _market(bars: pd.DataFrame, symbol: str = "SPY",
@@ -148,7 +194,7 @@ def test_long_signal_with_live_chain_produces_one_proposal():
     spot = float(market["SPY"].bars["close"].iloc[-1])
     exp = _exp(30)
     chains = {"SPY": _chain("SPY", spot, exp)}
-    proposals, checks = build_proposals(CONFIG, market, chains, _empty_ledger(), AUGUSTUS)
+    proposals, checks = build_proposals(GATE_OFF, market, chains, _empty_ledger(), AUGUSTUS)
     assert len(proposals) == 1
     p = proposals[0]
     assert p.underlying == "SPY" and p.option_type == "long_call"
@@ -171,7 +217,7 @@ def test_synthetic_chain_blocks_a_proposal_even_if_long():
     market = _market(_ramp())
     spot = float(market["SPY"].bars["close"].iloc[-1])
     chains = {"SPY": _chain("SPY", spot, _exp(30), synthetic=True)}
-    proposals, _ = build_proposals(CONFIG, market, chains, _empty_ledger(), AUGUSTUS)
+    proposals, _ = build_proposals(GATE_OFF, market, chains, _empty_ledger(), AUGUSTUS)
     assert proposals == []
 
 
@@ -185,7 +231,7 @@ def test_already_open_call_blocks_pyramiding():
         expiration="2026-12-18", contracts=1, premium_paid=100.0,
         entry_premium_per_contract=100.0, entry_date=date.today().isoformat(),
     )
-    proposals, _ = build_proposals(CONFIG, market, chains, ledger, AUGUSTUS)
+    proposals, _ = build_proposals(GATE_OFF, market, chains, ledger, AUGUSTUS)
     assert proposals == []
 
 
@@ -202,7 +248,7 @@ def test_expiration_too_close_is_skipped_for_a_later_one():
     chain.calls = pd.concat([near_rows, chain.calls], ignore_index=True)
     chain.expirations = [near, far]
 
-    proposals, _ = build_proposals(CONFIG, market, chain and {"SPY": chain}, _empty_ledger(),
+    proposals, _ = build_proposals(GATE_OFF, market, chain and {"SPY": chain}, _empty_ledger(),
                                    AUGUSTUS)
     assert len(proposals) == 1
     assert proposals[0].expiration == far
@@ -219,7 +265,7 @@ def test_multiple_underlyings_each_evaluated_independently():
         "SPY": _chain("SPY", spy_spot, _exp(30)),
         "QQQ": _chain("QQQ", qqq_spot, _exp(30)),
     }
-    proposals, checks = build_proposals(CONFIG, market, chains, _empty_ledger(), AUGUSTUS)
+    proposals, checks = build_proposals(GATE_OFF, market, chains, _empty_ledger(), AUGUSTUS)
     assert {p.underlying for p in proposals} == {"SPY"}
     call_reads = {c.underlying: c.signal_long for c in checks if c.direction == "call"}
     assert call_reads == {"SPY": True, "QQQ": False}
@@ -258,7 +304,7 @@ def test_falling_signal_with_live_chain_produces_one_put_proposal():
     spot = float(market["SPY"].bars["close"].iloc[-1])
     exp = _exp(30)
     chains = {"SPY": _chain("SPY", spot, exp)}
-    proposals, checks = build_proposals(CONFIG, market, chains, _empty_ledger(), AUGUSTUS)
+    proposals, checks = build_proposals(GATE_OFF, market, chains, _empty_ledger(), AUGUSTUS)
     assert len(proposals) == 1
     p = proposals[0]
     assert p.underlying == "SPY" and p.option_type == "long_put"
@@ -280,7 +326,7 @@ def test_open_call_blocks_a_put_proposal_on_the_same_underlying():
         expiration="2026-12-18", contracts=1, premium_paid=100.0,
         entry_premium_per_contract=100.0, entry_date=date.today().isoformat(),
     )
-    proposals, _ = build_proposals(CONFIG, market, chains, ledger, AUGUSTUS)
+    proposals, _ = build_proposals(GATE_OFF, market, chains, ledger, AUGUSTUS)
     assert proposals == []
 
 
@@ -294,7 +340,7 @@ def test_open_put_blocks_a_call_proposal_on_the_same_underlying():
         expiration="2026-12-18", contracts=1, premium_paid=100.0,
         entry_premium_per_contract=100.0, entry_date=date.today().isoformat(),
     )
-    proposals, _ = build_proposals(CONFIG, market, chains, ledger, AUGUSTUS)
+    proposals, _ = build_proposals(GATE_OFF, market, chains, ledger, AUGUSTUS)
     assert proposals == []
 
 
@@ -306,6 +352,79 @@ def test_puts_disabled_never_produces_a_put_proposal():
                                         _empty_ledger(), AUGUSTUS)
     assert proposals == []
     assert all(c.direction == "call" for c in checks)
+
+
+# ------------------------------------------------------------------ market gate
+
+
+def test_gate_passes_when_trending_and_validated():
+    """Empirically verified fixture (seed=15, drift=0.9): Greg reads this as
+    trending AND SPARK clears Charles's walk-forward + drawdown grading on
+    it (3/5 folds)."""
+    market = _market(_trend(seed=15, annual_drift=0.9))
+    gates = _market_gates(CONFIG, market, ["SPY"])
+    assert gates["SPY"].regime == "trending"
+    assert gates["SPY"].passed, gates["SPY"].reason
+
+
+def test_gate_blocks_on_choppy_regime():
+    market = _market(_chop())
+    gates = _market_gates(CONFIG, market, ["SPY"])
+    assert gates["SPY"].regime == "choppy"
+    assert not gates["SPY"].passed
+    assert "not trending" in gates["SPY"].reason
+
+
+def test_gate_blocks_when_trending_but_unvalidated():
+    """Default _trend() (seed=11, drift=0.6): trending per Greg, but SPARK
+    only clears 2/5 walk-forward folds on this particular series -- below
+    the 3/5 bar, so the gate should still block it."""
+    market = _market(_trend())
+    gates = _market_gates(CONFIG, market, ["SPY"])
+    assert gates["SPY"].regime == "trending"
+    assert not gates["SPY"].passed
+    assert "fails validation" in gates["SPY"].reason
+
+
+def test_gate_disabled_returns_empty():
+    market = _market(_trend(seed=15, annual_drift=0.9))
+    gates = _market_gates(_config_with(market_gate_enabled=False), market, ["SPY"])
+    assert gates == {}
+
+
+def test_build_proposals_blocked_by_gate_even_with_signal_and_chain():
+    """The interaction test: SPARK's own signal is long AND there's a live,
+    tradable chain AND no existing position -- everything that used to be
+    sufficient for a proposal -- but the gate still blocks it because this
+    60-bar ramp reads as an undecided regime (too little history for a
+    confident trending read at this length)."""
+    market = _market(_ramp())
+    spot = float(market["SPY"].bars["close"].iloc[-1])
+    chains = {"SPY": _chain("SPY", spot, _exp(30))}
+    proposals, checks = build_proposals(CONFIG, market, chains, _empty_ledger(), AUGUSTUS)
+    assert proposals == []
+    call_check = next(c for c in checks if c.direction == "call")
+    assert call_check.signal_long          # the trigger itself did fire
+    assert not call_check.gate_passed      # but the gate held it back
+    assert call_check.gate_detail
+
+
+def test_build_proposals_opens_once_gate_clears():
+    """Same shape as the blocked case above, but on a fixture that clears
+    the gate -- confirms the gate is a real block, not a no-op that happens
+    to always read False in tests."""
+    market = _market(_trend(seed=15, annual_drift=0.9), symbol="SPY")
+    spot = float(market["SPY"].bars["close"].iloc[-1])
+    chains = {"SPY": _chain("SPY", spot, _exp(30))}
+    proposals, checks = build_proposals(CONFIG, market, chains, _empty_ledger(), AUGUSTUS)
+    call_check = next(c for c in checks if c.direction == "call")
+    assert call_check.gate_passed
+    # Whether SPARK's OWN signal happens to be long on this particular
+    # random-walk fixture's last bar is a separate question from the gate;
+    # either way the gate itself must not be what's blocking it.
+    if call_check.signal_long:
+        assert len(proposals) == 1
+        assert proposals[0].option_type == "long_call"
 
 
 if __name__ == "__main__":

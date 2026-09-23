@@ -56,6 +56,19 @@ def _options_config(tmp_path, **overrides) -> Config:
     return Config(data)
 
 
+def _gate_off(cfg: Config) -> Config:
+    """The market gate (regime + walk-forward, see
+    strategies/options_strategy.py) requires real market history to earn a
+    "trending & validated" read -- more than the 60-bar `_ramp_bars` fixture
+    below can produce. These "forced-live" tests are about proving the
+    fetch -> signal -> Theo -> Joseph wiring opens a real position, not
+    about the gate itself (which has its own tests in
+    test_options_strategy.py), so they turn it off."""
+    data = cfg.as_dict()
+    data["options"]["strategy"]["market_gate_enabled"] = False
+    return Config(data)
+
+
 def _run_options_leg(cfg: Config, symbols: list[str]):
     """What `run_paper` does now: fetch the stock bars once, hand that same
     `market` dict to the options leg. Standing in here for the live
@@ -143,7 +156,7 @@ def test_options_leg_opens_a_position_with_live_data(tmp_path, monkeypatch):
     reading long -- the scenario your own machine hits once yfinance is
     reachable. Proves Joseph actually opens a position through the full
     stack, not just that the wiring runs without crashing."""
-    cfg = _options_config(tmp_path, enabled=True)
+    cfg = _gate_off(_options_config(tmp_path, enabled=True))
     bars = _ramp_bars()
     spot = float(bars["close"].iloc[-1])
     expiration = (date.today() + timedelta(days=30)).isoformat()
@@ -168,7 +181,7 @@ def test_options_leg_opens_a_position_with_live_data(tmp_path, monkeypatch):
 def test_options_leg_does_not_pyramid_on_a_second_run(tmp_path, monkeypatch):
     """Same forced-live setup, run twice: the signal stays long both times,
     but the second run must not open a second SPY call."""
-    cfg = _options_config(tmp_path, enabled=True)
+    cfg = _gate_off(_options_config(tmp_path, enabled=True))
     bars = _ramp_bars()
     spot = float(bars["close"].iloc[-1])
     expiration = (date.today() + timedelta(days=30)).isoformat()
@@ -297,7 +310,7 @@ def test_options_leg_fetches_underlyings_missing_from_market(tmp_path, monkeypat
 def test_options_leg_skips_compliance_blocked_underlyings(tmp_path, monkeypatch):
     """If David blocked SPY this run, the options desk must not open a call
     on it -- even with live data and SPARK reading long."""
-    cfg = _options_config(tmp_path, enabled=True, underlyings=["SPY"])
+    cfg = _gate_off(_options_config(tmp_path, enabled=True, underlyings=["SPY"]))
     bars = _ramp_bars()
     spot = float(bars["close"].iloc[-1])
     expiration = (date.today() + timedelta(days=30)).isoformat()

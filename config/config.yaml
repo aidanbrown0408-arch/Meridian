@@ -131,6 +131,13 @@ options:
     # Master switch for the put side. false reverts to Phase B behavior
     # (calls only) without touching strategies/options_strategy.py.
     puts_enabled: true
+    # Master switch for the pre-signal market gate: a signal (either
+    # direction) only becomes a proposal if Greg reads the underlying as
+    # "trending" (regime.* above) AND the trigger strategy clears Charles's
+    # own walk-forward + drawdown grading (validation.* / risk.* above) on
+    # that specific underlying, checked fresh every run. false reverts to
+    # Theo's caps being the only gate (the original Phase B/B2 behavior).
+    market_gate_enabled: true
 
 regime:
   # ADX: standard Wilder period. High ADX + a consistently-signed MA slope + 

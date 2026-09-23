@@ -409,7 +409,10 @@ def _print_options_report(chains: dict, ledger, prices: dict,
                 mark = "📈" if c.direction == "call" else "📉"
             else:
                 mark = "  "
-            print(f"    {mark} {c.underlying:<10} [{c.direction:<4}] {c.detail}")
+            gate = ""
+            if c.signal_long and not c.gate_passed:
+                gate = f"  ⛔ gate: {c.gate_detail}"
+            print(f"    {mark} {c.underlying:<10} [{c.direction:<4}] {c.detail}{gate}")
 
     equity = ledger.mark_to_market(prices)
     pnl = equity - ledger.starting_capital

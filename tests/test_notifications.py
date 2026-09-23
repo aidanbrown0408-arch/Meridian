@@ -346,8 +346,12 @@ def _ramp(n=60, start=440.0):
 
 
 def test_options_leg_posts_the_open_and_returns_standup_lines(tmp_path, posts, monkeypatch):
-    from tests.test_main_cli import _live_chain
-    cfg = _cfg(tmp_path, enabled=True, underlyings=["SPY"])
+    from tests.test_main_cli import _gate_off, _live_chain
+    # This 60-bar ramp fixture is too short to earn a "trending & validated"
+    # market-gate read (see strategies/options_strategy.py) -- gate off,
+    # since this test is about the Slack posting/standup-line wiring around
+    # an open, not the gate itself (covered in test_options_strategy.py).
+    cfg = _gate_off(_cfg(tmp_path, enabled=True, underlyings=["SPY"]))
     bars = _ramp()
     spot = float(bars["close"].iloc[-1])
     exp = (date.today() + timedelta(days=30)).isoformat()
