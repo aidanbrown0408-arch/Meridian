@@ -5,6 +5,7 @@
 #
 #   bash scripts/install_daily_options.sh            # install / reinstall
 #   bash scripts/install_daily_options.sh uninstall  # remove
+#   bash scripts/install_daily_options.sh status     # is it currently loaded?
 #   launchctl kickstart gui/$(id -u)/com.meridian.paper-options   # run now
 set -euo pipefail
 
@@ -20,6 +21,17 @@ if [ "${1:-}" = "uninstall" ]; then
   launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
   rm -f "$PLIST"
   echo "Removed $LABEL."
+  exit 0
+fi
+
+if [ "${1:-}" = "status" ]; then
+  if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+    echo "$LABEL is loaded."
+    launchctl print "$DOMAIN/$LABEL" | grep -E "last exit code|state =" || true
+  else
+    echo "$LABEL is NOT loaded -- it will not fire until you reinstall it:"
+    echo "  bash scripts/install_daily_options.sh"
+  fi
   exit 0
 fi
 
@@ -65,6 +77,7 @@ for wd in 1 2 3 4 5; do
 done
 cat <<PLISTTAIL
   </array>
+  <key>RunAtLoad</key><true/>
   <key>StandardOutPath</key><string>$REPO_DIR/reports/launchd_stdout.log</string>
   <key>StandardErrorPath</key><string>$REPO_DIR/reports/launchd_stderr.log</string>
 </dict>
@@ -76,8 +89,22 @@ plutil -lint "$PLIST"
 launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
 launchctl bootstrap "$DOMAIN" "$PLIST"
 
-echo
-echo "Installed $LABEL -- weekdays at 4:15 PM local time."
-echo "  python: $PYTHON_BIN"
-echo "  log:    $REPO_DIR/reports/launchd_paper_options.log"
-echo "Test it now with:  launchctl kickstart $DOMAIN/$LABEL"
+# Bootstrap can silently no-op (e.g. a stale plist elsewhere, a permissions
+# issue) -- this is exactly how the job went missing for four days last
+# time with no error anyone saw. Confirm it's actually loaded before
+# declaring victory instead of trusting bootstrap's exit code alone.
+sleep 1
+if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
+  echo
+  echo "Installed and verified loaded: $LABEL -- weekdays at 4:15 PM local time"
+  echo "(plus once at login/reboot, via RunAtLoad, in case a window was missed)."
+  echo "  python: $PYTHON_BIN"
+  echo "  log:    $REPO_DIR/reports/launchd_paper_options.log"
+  echo "Test it now with:  launchctl kickstart $DOMAIN/$LABEL"
+  echo "Check on it later with:  bash scripts/install_daily_options.sh status"
+else
+  echo
+  echo "WARNING: bootstrap did not report an error, but $LABEL is NOT loaded." >&2
+  echo "Check Console.app (search 'com.meridian') or re-run this script." >&2
+  exit 1
+fi
