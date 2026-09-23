@@ -26,8 +26,9 @@ from agents.options_risk_agent import OptionsProposal, RiskDecision  # noqa: E40
 from agents.portfolio_agent import Trade  # noqa: E402
 from utils.config import Config, load_config  # noqa: E402
 from utils.notifications import (  # noqa: E402
-    BookSnapshot, DeskLine, Notifier, StandupPayload, build_failure, build_halt,
-    build_options_activity, build_standup, build_stock_fills,
+    BookSnapshot, DeskLine, Notifier, StandupPayload, build_agent_line, build_failure,
+    build_halt, build_options_activity, build_standup, build_standup_header,
+    build_stock_fills,
 )
 
 BASE = load_config()
@@ -56,6 +57,25 @@ def posts(monkeypatch):
 
     monkeypatch.setattr(notifications, "post_message", fake_post)
     monkeypatch.setenv("MERIDIAN_SLACK_WEBHOOK_URL", "https://hooks.test/main")
+    return sent
+
+
+@pytest.fixture
+def bot_posts(monkeypatch):
+    """Capture every bot-mode chat.postMessage call as
+    (bot_token, channel, text, blocks, thread_ts). Does not itself set a
+    channel or any agent token -- individual tests opt in."""
+    sent = []
+    counter = {"n": 0}
+
+    def fake_post_as(bot_token, channel, text, blocks=None, thread_ts=None, timeout=10.0):
+        if not bot_token or not channel:
+            return None
+        counter["n"] += 1
+        sent.append((bot_token, channel, text, blocks or [], thread_ts))
+        return {"ok": True, "ts": thread_ts or f"1700000000.{counter['n']:06d}"}
+
+    monkeypatch.setattr(notifications, "post_as", fake_post_as)
     return sent
 
 
@@ -209,6 +229,110 @@ def test_a_formatting_bug_never_raises(tmp_path, posts, monkeypatch):
     monkeypatch.setattr(notifications, "build_halt", boom)
     assert Notifier(_cfg(tmp_path)).halt("Stock desk", "x") is False
     assert posts == []
+
+
+# ------------------------------------------------------------------ bot mode
+
+
+def _bot_cfg(tmp_path):
+    return _cfg(tmp_path, slack={
+        "channel_id_env": "MERIDIAN_SLACK_CHANNEL_ID",
+        "agent_tokens": {name: f"MERIDIAN_SLACK_TOKEN_{name.upper()}"
+                        for name in ("Wong", "Cornelius", "George", "Joseph")},
+    })
+
+
+def test_bot_mode_is_off_without_a_channel_or_any_agent_token(tmp_path):
+    assert Notifier(_bot_cfg(tmp_path)).bot_mode is False
+
+
+def test_standup_threads_george_header_then_each_agent_line(tmp_path, bot_posts, monkeypatch):
+    monkeypatch.setenv("MERIDIAN_SLACK_CHANNEL_ID", "C0MAIN")
+    monkeypatch.setenv("MERIDIAN_SLACK_TOKEN_GEORGE", "xoxb-george")
+    monkeypatch.setenv("MERIDIAN_SLACK_TOKEN_WONG", "xoxb-wong")
+    n = Notifier(_bot_cfg(tmp_path))
+    assert n.bot_mode is True
+
+    payload = StandupPayload(
+        mode="Paper",
+        stock_lines=[DeskLine("🔍", "Wong", "Data", "Pulled SPY — all live.")],
+        options_lines=[DeskLine("🎯", "Joseph", "Options Execution", "No trades today.")],
+        books=[BookSnapshot("Stock desk", 5100.0, 5000.0, 2, 1)],
+    )
+    assert n.standup(payload, now=WEDNESDAY) is True
+
+    header = bot_posts[0]
+    assert header[0] == "xoxb-george" and header[1] == "C0MAIN" and header[4] is None
+    thread_ts = "1700000000.000001"
+    wong_line = next(p for p in bot_posts[1:] if p[0] == "xoxb-wong")
+    assert wong_line[4] == thread_ts and "Pulled SPY" in wong_line[2]
+
+
+def test_agent_without_a_token_posts_under_george_in_the_thread(tmp_path, bot_posts, monkeypatch):
+    monkeypatch.setenv("MERIDIAN_SLACK_CHANNEL_ID", "C0MAIN")
+    monkeypatch.setenv("MERIDIAN_SLACK_TOKEN_GEORGE", "xoxb-george")
+    n = Notifier(_bot_cfg(tmp_path))  # only George has a token this rollout
+
+    payload = StandupPayload(
+        mode="Paper",
+        options_lines=[DeskLine("🎯", "Joseph", "Options Execution", "No trades today.")],
+    )
+    assert n.standup(payload, now=WEDNESDAY) is True
+
+    joseph_line = bot_posts[-1]
+    assert joseph_line[0] == "xoxb-george"  # posted as George, not dropped
+    assert "No trades today" in joseph_line[2]
+
+
+def test_standup_falls_back_to_the_webhook_when_the_header_post_fails(
+        tmp_path, posts, bot_posts, monkeypatch):
+    monkeypatch.setenv("MERIDIAN_SLACK_CHANNEL_ID", "C0MAIN")
+    monkeypatch.setenv("MERIDIAN_SLACK_TOKEN_WONG", "xoxb-wong")
+    # No George token at all -- post_as(None, ...) returns None for the header,
+    # even though Wong's token alone is enough to turn bot mode on.
+    n = Notifier(_bot_cfg(tmp_path))
+    assert n.bot_mode is True
+
+    payload = StandupPayload(mode="Paper",
+                             stock_lines=[DeskLine("🔍", "Wong", "Data", "Pulled SPY.")])
+    assert n.standup(payload, now=WEDNESDAY) is True
+    assert bot_posts == []  # header post never succeeded, nothing else was tried
+    assert len(posts) == 1 and posts[0][0] == "https://hooks.test/main"
+
+
+def test_bot_mode_routes_fills_and_halts_to_the_owning_agent(tmp_path, bot_posts, monkeypatch):
+    monkeypatch.setenv("MERIDIAN_SLACK_CHANNEL_ID", "C0MAIN")
+    monkeypatch.setenv("MERIDIAN_SLACK_TOKEN_CORNELIUS", "xoxb-cornelius")
+    monkeypatch.setenv("MERIDIAN_SLACK_TOKEN_JOSEPH", "xoxb-joseph")
+    n = Notifier(_bot_cfg(tmp_path))
+
+    assert n.stock_fills([Trade("d", "SPY", "buy", 1, 1, 0, "r")], 1, 1) is True
+    assert n.options_activity([_otrade("open")], [], 900.0, 700.0, 120.0) is True
+    assert n.halt("Stock desk", "x") is True
+    assert n.halt("Options desk", "y") is True
+
+    by_token = {p[0] for p in bot_posts}
+    assert by_token == {"xoxb-cornelius", "xoxb-joseph"}
+    assert bot_posts[0][0] == "xoxb-cornelius"   # stock fill
+    assert bot_posts[1][0] == "xoxb-joseph"      # options activity
+    assert bot_posts[2][0] == "xoxb-cornelius"   # stock desk halt
+    assert bot_posts[3][0] == "xoxb-joseph"      # options desk halt
+
+
+def test_bot_post_failure_falls_back_to_the_webhook_for_a_single_message(
+        tmp_path, posts, monkeypatch):
+    monkeypatch.setenv("MERIDIAN_SLACK_CHANNEL_ID", "C0MAIN")
+    monkeypatch.setenv("MERIDIAN_SLACK_TOKEN_CORNELIUS", "xoxb-bad-token")
+
+    def rejecting_post_as(bot_token, channel, text, blocks=None, thread_ts=None, timeout=10.0):
+        return None  # e.g. Cornelius's bot was never invited to the channel
+
+    monkeypatch.setattr(notifications, "post_as", rejecting_post_as)
+    n = Notifier(_bot_cfg(tmp_path))
+    assert n.bot_mode is True
+
+    assert n.stock_fills([Trade("d", "SPY", "buy", 1, 1, 0, "r")], 1, 1) is True
+    assert len(posts) == 1 and posts[0][0] == "https://hooks.test/main"
 
 
 # ------------------------------------------------------------------ integration

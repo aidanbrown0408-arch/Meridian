@@ -6,3 +6,6 @@ reports/*.html
 reports/*.json
 .venv/
 Claude outputs/
+
+# Slack bot-mode credentials -- secrets, never commit
+scripts/slack_env.sh

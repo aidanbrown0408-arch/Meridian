@@ -222,6 +222,31 @@ slack:
   # footer shows the local file path instead of a link.
   dashboard_url: ""
   post_daily_standup: true
+  # Optional bot mode: give each agent its own Slack app/bot user (own
+  # profile, own avatar, shows up in the channel's member list) instead of
+  # every message coming from the shared webhook. Off unless
+  # channel_id_env resolves to a real channel ID AND at least one entry in
+  # agent_tokens has its env var set -- with neither, behavior is
+  # byte-for-byte the same as the webhook-only setup above. See
+  # docs/slack_agents_setup.md to create the ten Slack apps and set these
+  # environment variables (as few or as many at a time as you like; any
+  # agent without a token yet just posts under George's identity).
+  channel_id_env: MERIDIAN_SLACK_CHANNEL_ID
+  # Optional second channel ID for urgent messages, mirroring
+  # alerts_webhook_url_env above. If unset, urgent bot-mode messages use
+  # channel_id_env's channel too.
+  alerts_channel_id_env: MERIDIAN_SLACK_ALERTS_CHANNEL_ID
+  agent_tokens:
+    Wong: MERIDIAN_SLACK_TOKEN_WONG
+    David: MERIDIAN_SLACK_TOKEN_DAVID
+    Leo: MERIDIAN_SLACK_TOKEN_LEO
+    Charles: MERIDIAN_SLACK_TOKEN_CHARLES
+    Greg: MERIDIAN_SLACK_TOKEN_GREG
+    Cornelius: MERIDIAN_SLACK_TOKEN_CORNELIUS
+    George: MERIDIAN_SLACK_TOKEN_GEORGE
+    Augustus: MERIDIAN_SLACK_TOKEN_AUGUSTUS
+    Theo: MERIDIAN_SLACK_TOKEN_THEO
+    Joseph: MERIDIAN_SLACK_TOKEN_JOSEPH
   # Turn individual message types on/off (see utils/notifications.py).
   notify:
     trades: true            # every stock fill / options open, close, expiry, Theo rejection

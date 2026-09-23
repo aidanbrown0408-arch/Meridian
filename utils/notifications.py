@@ -23,6 +23,21 @@ Routing: routine messages go to `slack.webhook_url_env`; urgent ones
 otherwise to the same channel. Every type can be switched off under
 `slack.notify` in config.
 
+**Bot mode (optional).** By default every message above goes out as the one
+shared webhook. If `slack.channel_id_env` resolves to a real channel ID and
+at least one `slack.agent_tokens` entry has its env var set, `Notifier`
+switches that message to Slack's `chat.postMessage` API instead, posting as
+the owning agent's own bot user (own name, own avatar) rather than the
+generic webhook sender. The standup becomes a real thread: George posts the
+scoreboard and opens it, then each agent posts their own line as a threaded
+reply. An agent with no bot token yet still gets their line in -- it posts
+under George's identity rather than being dropped, so partial rollout (some
+of the ten Slack apps not created yet) degrades gracefully. Every bot-mode
+post that fails outright (bad token, bot not invited to the channel, no
+channel ID at all) falls straight back to the original webhook message --
+nothing in this layer can newly cause a message to go unsent. See
+`docs/slack_agents_setup.md` for how to create the ten Slack apps.
+
 Nothing here ever raises into the trading run. A formatting bug or a Slack
 outage logs a warning and the run carries on.
 """
@@ -35,7 +50,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from utils.logging_setup import get_logger
-from utils.slack import post_message
+from utils.slack import post_as, post_message
 
 log = get_logger("notifications", agent="George")
 
@@ -206,6 +221,57 @@ def build_standup(p: StandupPayload, now: datetime | None = None) -> tuple[str, 
     return text, blocks[:50]
 
 
+def build_standup_header(p: StandupPayload, now: datetime | None = None) -> tuple[str, list[dict]]:
+    """Bot-mode standup opener: the scoreboard and inquiries, no per-agent
+    lines -- those each post as their own threaded reply (`build_agent_line`)
+    under this message. Posted as George; its `ts` becomes the thread."""
+    now = now or datetime.now()
+    blocks: list[dict] = [
+        _header("Meridian Capital · Daily Standup"),
+        _context(f"*{esc(p.mode)}* · {_stamp(now)}"),
+    ]
+
+    for book in p.books:
+        blocks += [_divider(),
+                   _section(f"*{esc(book.name)}*  ·  {money(book.equity)}  ({pct(book.pnl_pct)})")]
+        status = (f":octagonal_sign: *HALTED* — {esc(book.halt_reason)}"
+                  if book.halted else ":large_green_circle: Trading")
+        pairs = [
+            ("P&L since inception", money(book.pnl, signed=True) if book.pnl else "$0.00"),
+            ("Status", status),
+            ("Open positions", str(book.open_positions)),
+            ("Fills this run", str(book.fills_today)),
+        ]
+        if book.extra:
+            pairs.append((book.extra_label or "Other", esc(book.extra)))
+        blocks.append(_fields(pairs))
+
+    if p.inquiries:
+        rows = [f":raised_hand:  *{esc(r.trader)}* — recommend *{esc(r.action.upper())}* "
+                f"({esc(r.trigger.replace('_', ' '))})\n{esc(r.detail)}" for r in p.inquiries]
+        blocks += [_divider(),
+                   _section("*Needs your approval*\n" + "\n".join(_clip(rows))),
+                   _context("Nothing changes until you run `python main.py bench` / `unbench`.")]
+
+    footer = _dashboard_ref(p.dashboard)
+    blocks += [_divider(),
+              _context(footer or "Meridian Capital", "George · Reporting",
+                       "Replies below are each agent's line from today's run.")]
+
+    summary = " · ".join(f"{b.name} {money(b.equity)} ({pct(b.pnl_pct)})" for b in p.books)
+    text = f"Meridian daily standup — {summary}" if summary else "Meridian daily standup"
+    return text, blocks[:50]
+
+
+def build_agent_line(line: DeskLine, now: datetime | None = None) -> tuple[str, list[dict]]:
+    """One `DeskLine` as its own threaded reply, posted as that agent."""
+    blocks = [
+        _section(f"{esc(line.text)}{TONE_MARK.get(line.tone, '')}"),
+        _context(f"{esc(line.role)} · {_stamp(now or datetime.now())}"),
+    ]
+    return line.plain(), blocks
+
+
 def build_stock_fills(trades: list, equity: float, cash: float,
                       now: datetime | None = None) -> tuple[str, list[dict]]:
     rows = []
@@ -324,6 +390,9 @@ class Notifier:
 
     URGENT = {"halts", "failures"}
 
+    #: Which agent's bot identity owns each desk's halt/halt-cleared message.
+    _DESK_AGENT = {"stock desk": "Cornelius", "options desk": "Joseph"}
+
     def __init__(self, config, enabled: bool = True):
         self.config = config
         self.enabled = enabled
@@ -335,6 +404,22 @@ class Notifier:
         self.dashboard = str(config.get("slack.dashboard_url", "") or "")
         self.sent: list[tuple[str, str]] = []  # (kind, text) -- for tests/console
 
+        # Bot mode: per-agent Slack apps, layered on top of the webhook
+        # above. Off unless a channel ID and at least one agent token
+        # resolve from the environment -- when it's off, behavior is
+        # byte-for-byte the same as before this existed.
+        channel_env = config.get("slack.channel_id_env", "MERIDIAN_SLACK_CHANNEL_ID")
+        alerts_channel_env = config.get("slack.alerts_channel_id_env",
+                                        "MERIDIAN_SLACK_ALERTS_CHANNEL_ID")
+        self.channel_id = os.environ.get(channel_env)
+        self.alerts_channel_id = os.environ.get(alerts_channel_env) or self.channel_id
+        self._agent_tokens: dict[str, str] = {}
+        for agent, env_var in (config.get("slack.agent_tokens", {}) or {}).items():
+            token = os.environ.get(env_var)
+            if token:
+                self._agent_tokens[agent] = token
+        self.bot_mode = bool(self.channel_id and self._agent_tokens)
+
     def allowed(self, kind: str) -> bool:
         if not self.enabled:
             return False
@@ -342,14 +427,13 @@ class Notifier:
             return bool(self.config.get("slack.post_daily_standup", True))
         return bool(self.config.get(f"slack.notify.{kind}", True))
 
-    def _send(self, kind: str, build, *args, **kwargs) -> bool:
-        if not self.allowed(kind):
-            return False
-        try:
-            text, blocks = build(*args, **kwargs)
-        except Exception as exc:  # a formatting bug must never stop a run
-            log.warning("Could not build %s Slack message (%s) -- skipped.", kind, exc)
-            return False
+    def _desk_agent(self, desk: str) -> str:
+        return self._DESK_AGENT.get(desk.strip().lower(), "George")
+
+    def _fallback_webhook(self, kind: str, text: str, blocks: list[dict]) -> bool:
+        """The original, bot-mode-free path: post the shared webhook message
+        and record it. Used both when bot mode is off and whenever a
+        bot-mode post fails outright."""
         url = self.alerts_webhook_url if kind in self.URGENT else self.webhook_url
         try:
             ok = post_message(url, text, blocks)
@@ -359,6 +443,69 @@ class Notifier:
         self.sent.append((kind, text))
         return ok
 
+    def _send(self, kind: str, agent: str, build, *args, **kwargs) -> bool:
+        """Build one message and send it as `agent`'s bot identity when bot
+        mode can, otherwise (or on any bot-mode failure) over the shared
+        webhook. A formatting bug never stops a run."""
+        if not self.allowed(kind):
+            return False
+        try:
+            text, blocks = build(*args, **kwargs)
+        except Exception as exc:
+            log.warning("Could not build %s Slack message (%s) -- skipped.", kind, exc)
+            return False
+
+        if self.bot_mode:
+            token = self._agent_tokens.get(agent)
+            channel = self.alerts_channel_id if kind in self.URGENT else self.channel_id
+            if token and channel:
+                posted = post_as(token, channel, text, blocks)
+                if posted is not None:
+                    self.sent.append((kind, text))
+                    return True
+                log.warning("Bot-mode %s post as %s failed -- falling back to webhook.",
+                           kind, agent)
+
+        return self._fallback_webhook(kind, text, blocks)
+
+    def _standup_bot_mode(self, payload: StandupPayload, now: datetime) -> bool:
+        """Real Slack thread: George posts the header and opens the thread,
+        then each agent posts their own line as a threaded reply under it.
+        An agent with no bot token yet posts under George's identity instead
+        of being dropped. Returns False on any failure posting the header --
+        the caller then falls back to the single webhook message, untouched
+        by anything attempted here."""
+        try:
+            text, blocks = build_standup_header(payload, now)
+        except Exception as exc:
+            log.warning("Could not build standup header (%s) -- bot mode skipped.", exc)
+            return False
+
+        george_token = self._agent_tokens.get("George")
+        header = post_as(george_token, self.channel_id, text, blocks)
+        if header is None:
+            return False
+        thread_ts = header.get("ts")
+
+        for line in list(payload.stock_lines) + list(payload.options_lines):
+            try:
+                line_text, line_blocks = build_agent_line(line, now)
+            except Exception as exc:
+                log.warning("Could not build standup line for %s (%s) -- skipped.",
+                           line.agent, exc)
+                continue
+            token = self._agent_tokens.get(line.agent)
+            posted = post_as(token or george_token, self.channel_id, line_text,
+                             line_blocks, thread_ts=thread_ts)
+            if posted is None and token:
+                # That agent's own bot post failed -- still get the line
+                # into the thread under George rather than dropping it.
+                post_as(george_token, self.channel_id, line_text, line_blocks,
+                       thread_ts=thread_ts)
+
+        self.sent.append(("standup", text))
+        return True
+
     # -- public API, one method per message type
 
     def standup(self, payload: StandupPayload, now: datetime | None = None) -> bool:
@@ -366,30 +513,42 @@ class Notifier:
         if now.weekday() not in STANDUP_WEEKDAYS:
             log.info("Weekend -- standup post skipped (weekdays only per spec).")
             return False
+        if not self.allowed("standup"):
+            return False
         if not payload.dashboard:
             payload.dashboard = self.dashboard
-        return self._send("standup", build_standup, payload, now)
+
+        if self.bot_mode and self._standup_bot_mode(payload, now):
+            return True
+
+        try:
+            text, blocks = build_standup(payload, now)
+        except Exception as exc:
+            log.warning("Could not build standup Slack message (%s) -- skipped.", exc)
+            return False
+        return self._fallback_webhook("standup", text, blocks)
 
     def stock_fills(self, trades: list, equity: float, cash: float) -> bool:
         if not trades:
             return False
-        return self._send("trades", build_stock_fills, trades, equity, cash)
+        return self._send("trades", "Cornelius", build_stock_fills, trades, equity, cash)
 
     def options_activity(self, trades: list, rejections: list, equity: float,
                          cash: float, open_premium: float) -> bool:
         if not trades and not rejections:
             return False
-        return self._send("trades", build_options_activity, trades, rejections,
+        return self._send("trades", "Joseph", build_options_activity, trades, rejections,
                           equity, cash, open_premium)
 
     def halt(self, desk: str, reason: str, detail: str = "", manual: bool = False) -> bool:
-        return self._send("halts", build_halt, desk, reason, detail, manual)
+        return self._send("halts", self._desk_agent(desk), build_halt,
+                          desk, reason, detail, manual)
 
     def halt_cleared(self, desk: str) -> bool:
-        return self._send("operator_actions", build_halt_cleared, desk)
+        return self._send("operator_actions", self._desk_agent(desk), build_halt_cleared, desk)
 
     def operator_action(self, action: str, detail: str) -> bool:
-        return self._send("operator_actions", build_operator_action, action, detail)
+        return self._send("operator_actions", "George", build_operator_action, action, detail)
 
     def failure(self, stage: str, exc: BaseException, impact: str = "") -> bool:
-        return self._send("failures", build_failure, stage, exc, impact)
+        return self._send("failures", "George", build_failure, stage, exc, impact)

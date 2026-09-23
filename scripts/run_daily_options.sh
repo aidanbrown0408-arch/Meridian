@@ -13,6 +13,17 @@ LOG_FILE="$REPO_DIR/reports/launchd_paper_options.log"
 cd "$REPO_DIR" || exit 1
 mkdir -p "$REPO_DIR/reports"
 
+# Slack bot-mode credentials (MERIDIAN_SLACK_CHANNEL_ID + per-agent bot tokens).
+# The launchd plist only sets PATH, so the vars have to come from here.
+# Gitignored; absent on a fresh clone -- skip quietly rather than fail the run.
+SLACK_ENV_FILE="$REPO_DIR/scripts/slack_env.sh"
+if [ -f "$SLACK_ENV_FILE" ]; then
+  # shellcheck source=/dev/null
+  . "$SLACK_ENV_FILE"
+else
+  echo "$(date '+%Y-%m-%d %H:%M:%S') slack_env.sh not found -- Slack bot mode disabled" >> "$LOG_FILE"
+fi
+
 # Skip weekends even if the job is kicked manually or fires late after sleep.
 dow=$(date +%u)   # 1=Mon ... 7=Sun
 if [ "$dow" -ge 6 ]; then
