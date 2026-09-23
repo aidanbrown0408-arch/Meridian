@@ -20,11 +20,21 @@ from agents.options_broker import OptionsLedger, OptionsPosition  # noqa: E402
 from agents.options_data_agent import (  # noqa: E402
     CHAIN_COLUMNS, OptionsChain, OptionsDataAgent,
 )
-from strategies.options_strategy import build_proposals, check_signals  # noqa: E402
-from utils.config import load_config  # noqa: E402
+from strategies.options_strategy import (  # noqa: E402
+    build_proposals, check_put_signals, check_signals,
+)
+from utils.config import Config, load_config  # noqa: E402
 
 CONFIG = load_config()
 AUGUSTUS = OptionsDataAgent(CONFIG)
+
+
+def _config_with(**overrides) -> Config:
+    """A Config copy with one or more `options.strategy.*` keys overridden --
+    for toggling `puts_enabled` without touching the real config file."""
+    data = CONFIG.as_dict()
+    data["options"]["strategy"].update(overrides)
+    return Config(data)
 
 
 # ------------------------------------------------------------------ fixtures
@@ -49,6 +59,18 @@ def _flat(n: int = 60, level: float = 440.0) -> pd.DataFrame:
                          "close": close, "volume": 1e6}, index=index)
 
 
+def _falling(n: int = 60, start: float = 440.0, step: float = 1.0) -> pd.DataFrame:
+    """Monotonically falling close series -- the mirror-image of `_ramp`.
+    SPARK itself reads this as flat throughout (it only ever goes long, it
+    never shorts), but the put-side Donchian breakdown reads it as active
+    once warmup clears."""
+    index = pd.bdate_range(end=pd.Timestamp.today().normalize(), periods=n)
+    close = start - step * np.arange(n)
+    return pd.DataFrame({"open": close, "high": close * 1.001,
+                         "low": close * 0.999, "close": close,
+                         "volume": 1e6}, index=index)
+
+
 def _market(bars: pd.DataFrame, symbol: str = "SPY",
            source: str = "yfinance") -> dict[str, MarketData]:
     return {symbol: MarketData(symbol, "stocks", bars, source,
@@ -57,21 +79,26 @@ def _market(bars: pd.DataFrame, symbol: str = "SPY",
 
 def _chain(symbol: str, spot: float, expiration: str,
           synthetic: bool = False) -> OptionsChain:
-    """A small, deterministic real-shaped chain: 5 strikes around spot."""
+    """A small, deterministic real-shaped chain: 5 strikes around spot, both
+    sides populated (like a real yfinance chain always has calls and puts)."""
     strikes = [spot - 10, spot - 5, spot, spot + 5, spot + 10]
-    rows = []
-    for strike in strikes:
-        intrinsic = max(spot - strike, 0.0)
-        mid = intrinsic + 3.0
-        rows.append({"underlying": symbol, "option_type": "long_call",
-                    "strike": strike, "expiration": expiration,
-                    "bid": round((mid - 0.1) * 100, 2), "ask": round((mid + 0.1) * 100, 2),
-                    "last": round(mid * 100, 2), "volume": 100, "open_interest": 500,
-                    "implied_volatility": 0.2})
-    calls = pd.DataFrame(rows, columns=CHAIN_COLUMNS)
-    puts = pd.DataFrame(columns=CHAIN_COLUMNS)
+
+    def _side(option_type: str) -> pd.DataFrame:
+        rows = []
+        for strike in strikes:
+            intrinsic = (max(spot - strike, 0.0) if option_type == "long_call"
+                        else max(strike - spot, 0.0))
+            mid = intrinsic + 3.0
+            rows.append({"underlying": symbol, "option_type": option_type,
+                        "strike": strike, "expiration": expiration,
+                        "bid": round((mid - 0.1) * 100, 2), "ask": round((mid + 0.1) * 100, 2),
+                        "last": round(mid * 100, 2), "volume": 100, "open_interest": 500,
+                        "implied_volatility": 0.2})
+        return pd.DataFrame(rows, columns=CHAIN_COLUMNS)
+
     source = "synthetic" if synthetic else "yfinance"
-    return OptionsChain(symbol, [expiration], calls, puts, source, pd.Timestamp.now(tz="UTC"))
+    return OptionsChain(symbol, [expiration], _side("long_call"), _side("long_put"),
+                        source, pd.Timestamp.now(tz="UTC"))
 
 
 def _empty_ledger() -> OptionsLedger:
@@ -194,7 +221,91 @@ def test_multiple_underlyings_each_evaluated_independently():
     }
     proposals, checks = build_proposals(CONFIG, market, chains, _empty_ledger(), AUGUSTUS)
     assert {p.underlying for p in proposals} == {"SPY"}
-    assert {c.underlying: c.signal_long for c in checks} == {"SPY": True, "QQQ": False}
+    call_reads = {c.underlying: c.signal_long for c in checks if c.direction == "call"}
+    assert call_reads == {"SPY": True, "QQQ": False}
+
+
+# ------------------------------------------------------------------ check_put_signals
+
+
+def test_put_signal_is_active_on_a_falling_series():
+    market = _market(_falling())
+    checks = check_put_signals(CONFIG, market)
+    spy = next(c for c in checks if c.underlying == "SPY")
+    assert spy.signal_long
+    assert spy.direction == "put"
+    assert "breakdown" in spy.detail
+
+
+def test_put_signal_is_flat_on_a_rising_series():
+    market = _market(_ramp())
+    checks = check_put_signals(CONFIG, market)
+    spy = next(c for c in checks if c.underlying == "SPY")
+    assert not spy.signal_long
+
+
+def test_put_signals_empty_when_disabled():
+    market = _market(_falling())
+    checks = check_put_signals(_config_with(puts_enabled=False), market)
+    assert checks == []
+
+
+# ------------------------------------------------------------------ build_proposals (puts)
+
+
+def test_falling_signal_with_live_chain_produces_one_put_proposal():
+    market = _market(_falling())
+    spot = float(market["SPY"].bars["close"].iloc[-1])
+    exp = _exp(30)
+    chains = {"SPY": _chain("SPY", spot, exp)}
+    proposals, checks = build_proposals(CONFIG, market, chains, _empty_ledger(), AUGUSTUS)
+    assert len(proposals) == 1
+    p = proposals[0]
+    assert p.underlying == "SPY" and p.option_type == "long_put"
+    assert p.expiration == exp
+    assert p.strike == spot
+    assert p.premium_per_contract > 0
+    assert "SPARK" in p.reason
+
+
+def test_open_call_blocks_a_put_proposal_on_the_same_underlying():
+    """The no-straddling rule: an open call on SPY must block a new put
+    proposal on SPY too, not just another call."""
+    market = _market(_falling())
+    spot = float(market["SPY"].bars["close"].iloc[-1])
+    chains = {"SPY": _chain("SPY", spot, _exp(30))}
+    ledger = _empty_ledger()
+    ledger.positions["SPY|long_call|450|2026-12-18"] = OptionsPosition(
+        underlying="SPY", option_type="long_call", strike=450.0,
+        expiration="2026-12-18", contracts=1, premium_paid=100.0,
+        entry_premium_per_contract=100.0, entry_date=date.today().isoformat(),
+    )
+    proposals, _ = build_proposals(CONFIG, market, chains, ledger, AUGUSTUS)
+    assert proposals == []
+
+
+def test_open_put_blocks_a_call_proposal_on_the_same_underlying():
+    market = _market(_ramp())
+    spot = float(market["SPY"].bars["close"].iloc[-1])
+    chains = {"SPY": _chain("SPY", spot, _exp(30))}
+    ledger = _empty_ledger()
+    ledger.positions["SPY|long_put|430|2026-12-18"] = OptionsPosition(
+        underlying="SPY", option_type="long_put", strike=430.0,
+        expiration="2026-12-18", contracts=1, premium_paid=100.0,
+        entry_premium_per_contract=100.0, entry_date=date.today().isoformat(),
+    )
+    proposals, _ = build_proposals(CONFIG, market, chains, ledger, AUGUSTUS)
+    assert proposals == []
+
+
+def test_puts_disabled_never_produces_a_put_proposal():
+    market = _market(_falling())
+    spot = float(market["SPY"].bars["close"].iloc[-1])
+    chains = {"SPY": _chain("SPY", spot, _exp(30))}
+    proposals, checks = build_proposals(_config_with(puts_enabled=False), market, chains,
+                                        _empty_ledger(), AUGUSTUS)
+    assert proposals == []
+    assert all(c.direction == "call" for c in checks)
 
 
 if __name__ == "__main__":

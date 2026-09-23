@@ -162,7 +162,8 @@ class ReportingAgent:
             "positions": positions,
             "recent_trades": trades,
             "signals": [{"underlying": c.underlying, "trigger": c.trigger,
-                         "signal_long": bool(c.signal_long), "detail": c.detail}
+                         "signal_long": bool(c.signal_long), "detail": c.detail,
+                         "direction": c.direction}
                         for c in (checks or [])],
             "chains": [{"underlying": sym, "expirations": len(ch.expirations),
                         "calls": len(ch.calls), "puts": len(ch.puts),
@@ -498,11 +499,18 @@ class ReportingAgent:
                                   "warn"))
 
         if checks:
-            reads = ", ".join(f"{c.underlying} {'LONG' if c.signal_long else 'flat'}"
-                              for c in checks)
-            any_long = any(c.signal_long for c in checks)
-            lines.append(DeskLine("\u26A1", checks[0].trigger, "Signal",
-                                  f"{reads}.", "good" if any_long else "info"))
+            active = [c for c in checks if c.signal_long]
+            if active:
+                reads = ", ".join(
+                    f"{c.underlying} {'CALL' if c.direction == 'call' else 'PUT'}"
+                    for c in active)
+            else:
+                seen_underlyings = list(dict.fromkeys(c.underlying for c in checks))
+                reads = ", ".join(f"{s} flat" for s in seen_underlyings)
+            trigger_label = next((c.trigger for c in checks if c.direction == "call"),
+                                 checks[0].trigger)
+            lines.append(DeskLine("\u26A1", trigger_label, "Signal",
+                                  f"{reads}.", "good" if active else "info"))
 
         if proposals or rejections:
             approved = len(proposals) - len(rejections)
@@ -514,11 +522,11 @@ class ReportingAgent:
             lines.append(DeskLine("\U0001F6E1\uFE0F", "Theo", "Options Risk", text + ".",
                                   "warn" if rejections else "info"))
         else:
-            longs = [c.underlying for c in checks if c.signal_long]
-            if longs:
-                verb = "has" if len(longs) == 1 else "have"
-                text = (f"No proposals — {', '.join(longs)} signalled long but "
-                        f"{verb} no tradable chain or a call already open.")
+            active_names = [c.underlying for c in checks if c.signal_long]
+            if active_names:
+                verb = "has" if len(active_names) == 1 else "have"
+                text = (f"No proposals — {', '.join(active_names)} signalled but "
+                        f"{verb} no tradable chain or a position already open.")
             else:
                 text = "No proposals — no entry signal."
             lines.append(DeskLine("\U0001F6E1\uFE0F", "Theo", "Options Risk", text))

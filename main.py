@@ -403,10 +403,13 @@ def _print_options_report(chains: dict, ledger, prices: dict,
               f"source={chain.data_source:<10}{flag}")
 
     if checks:
-        print(f"\n  STRATEGY SIGNAL ({checks[0].trigger} -> calls only, Phase B)")
+        print("\n  STRATEGY SIGNAL (SPARK breakout — calls + puts, Phase B/B2)")
         for c in checks:
-            mark = "📈" if c.signal_long else "  "
-            print(f"    {mark} {c.underlying:<10} {c.detail}")
+            if c.signal_long:
+                mark = "📈" if c.direction == "call" else "📉"
+            else:
+                mark = "  "
+            print(f"    {mark} {c.underlying:<10} [{c.direction:<4}] {c.detail}")
 
     equity = ledger.mark_to_market(prices)
     pnl = equity - ledger.starting_capital

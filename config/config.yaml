@@ -115,10 +115,12 @@ options:
     min_days_to_expiration: 1
     max_days_to_expiration: 60
 
-  # Phase B: the first (and so far only) options strategy -- "buy a call
-  # when this stock-side trader's live signal is long." Reuses SPARK's
-  # own configured params above (strategies.SPARK.params) so the options
-  # entry never drifts from what Leo/Charles see on the stock side.
+  # Phase B/B2: "buy a call when this stock-side trader's live signal is
+  # long; buy a put when the same Donchian mechanic breaks down." Reuses
+  # SPARK's own configured params above (strategies.SPARK.params) for BOTH
+  # directions so neither entry ever drifts from what Leo/Charles see on
+  # the stock side. At most one position (either direction) open per
+  # underlying at a time -- see strategies/options_strategy.py.
   strategy:
     trigger_strategy: SPARK
     contracts_per_signal: 1
@@ -126,6 +128,9 @@ options:
     # avoids opening something that's about to expire before the next
     # scheduled run can act on it.
     min_days_to_expiration: 3
+    # Master switch for the put side. false reverts to Phase B behavior
+    # (calls only) without touching strategies/options_strategy.py.
+    puts_enabled: true
 
 regime:
   # ADX: standard Wilder period. High ADX + a consistently-signed MA slope + 
@@ -220,7 +225,7 @@ slack:
   alerts_webhook_url_env: MERIDIAN_SLACK_ALERTS_WEBHOOK_URL
   # Optional: a URL where the dashboard is hosted. If empty, the standup
   # footer shows the local file path instead of a link.
-  dashboard_url: ""
+  dashboard_url: "http://Aidans-MacBook-Air.local:8765/latest.html"
   post_daily_standup: true
   # Optional bot mode: give each agent its own Slack app/bot user (own
   # profile, own avatar, shows up in the channel's member list) instead of
