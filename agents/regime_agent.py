@@ -253,13 +253,16 @@ class RegimeAgent:
         for symbol in market:
             raw = 0.0
             contributors: list[str] = []
+            per_trader: dict[str, float] = {}
             for adj in adjustments:
                 if adj.symbol != symbol or not adj.active:
                     continue
                 raw += adj.adjusted_weight
                 contributors.append(adj.strategy)
+                per_trader[adj.strategy] = per_trader.get(adj.strategy, 0.0) + adj.adjusted_weight
             netted[symbol] = NettedPosition(
                 symbol=symbol, target_weight=min(raw, self.max_position_pct),
                 capped=raw > self.max_position_pct, contributors=contributors,
+                per_trader=per_trader,
             )
         return netted

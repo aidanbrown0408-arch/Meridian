@@ -22,8 +22,10 @@ CLI rather than an interactive Slack app.
 Options is a separate ledger and a separate set of agents, but no longer a
 separate run. Whatever Wong/David/Leo/Charles/Greg agree on for SPY or QQQ
 inside `paper` is the same decision handed to the options desk: if
-`options.enabled` is on, SPY/QQQ target weight is zeroed before Cornelius
-acts (so they're never opened as shares), and that same agreement --
+`options.enabled` is on, SPARK's slice of SPY/QQQ's target weight is removed
+before Cornelius acts (SPARK's view trades as options, never also as shares),
+while every other live strategy's slice of SPY/QQQ is bought as real shares
+like any other ticker. That same agreement --
 reusing the very same `market` bars, not a second independent read -- is
 what the SPARK-calls strategy (`strategies/options_strategy.py`) checks.
 Augustus fetches SPY/QQQ option chains, Theo enforces the four hard caps,
@@ -172,10 +174,10 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
     greg = RegimeAgent(config)
     regime_report = greg.run(leo.strategies, market, results, risk_report)
 
-    # SPY/QQQ never get opened as shares -- if the options bucket is on,
-    # their target weight is zeroed before Cornelius sees it, and the same
-    # agreement (Wong/David/Leo/Charles/Greg, same market dict, same
-    # SPARK signal) is handed to Augustus/Theo/Joseph instead.
+    # If the options bucket is on, SPARK's slice of SPY/QQQ is removed
+    # before Cornelius sees it -- SPARK's view on those trades on the options
+    # desk (Augustus/Theo/Joseph, same market dict) instead. Every other
+    # live strategy's slice of SPY/QQQ still goes to Cornelius as shares.
     options_underlyings = set(config.get("options.underlyings", [])) \
         if config.get("options.enabled", False) else set()
 
@@ -184,9 +186,11 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
     fills_before = _trade_count(cornelius)
     stock_positions = regime_report.netted_positions
     if options_underlyings:
-        stock_positions = _route_options_underlyings(regime_report, options_underlyings
-                                                     ).netted_positions
-        _warn_on_legacy_share_positions(cornelius, market, options_underlyings)
+        stock_positions = _route_options_underlyings(
+            regime_report, options_underlyings, _options_routed_strategies(config)
+        ).netted_positions
+        _warn_on_legacy_share_positions(cornelius, market, options_underlyings,
+                                        stock_positions)
     ledger = cornelius.execute(market, stock_positions, regime_report.adjustments)
     new_fills = ledger.trades[fills_before:]
     stock_prices = ReportingAgent._prices(market)
@@ -200,7 +204,7 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
 
     # George and the console report get the UNROUTED regime report, so the
     # dashboard still shows what the desk actually agreed on for SPY/QQQ.
-    # Only Cornelius sees the zeroed weights.
+    # Only Cornelius sees the routed weights (SPARK's SPY/QQQ slice removed).
     george = ReportingAgent(config)
     dashboard = george.run(market, compliance, results, benchmarks, risk_report,
                            regime_report, ledger=ledger, recommendations=recommendations,
@@ -254,39 +258,89 @@ def _trade_count(broker) -> int:
 
 # ------------------------------------------------------------------ options routing
 
-def _route_options_underlyings(regime_report: RegimeReport, underlyings: set[str]
+DEFAULT_OPTIONS_ROUTED_STRATEGIES = frozenset({"SPARK"})
+
+
+def _options_routed_strategies(config) -> frozenset:
+    """Which strategies' SPY/QQQ views trade on the options desk instead of
+    as shares. Only SPARK drives the options desk today (see
+    strategies/options_strategy.py), so only SPARK's slice is routed."""
+    return frozenset(config.get("options.routed_strategies",
+                                sorted(DEFAULT_OPTIONS_ROUTED_STRATEGIES)))
+
+
+def _route_options_underlyings(regime_report: RegimeReport, underlyings: set[str],
+                               routed_strategies=DEFAULT_OPTIONS_ROUTED_STRATEGIES
                                ) -> "RegimeReport":
-    """Zero out SPY/QQQ's target weight before Cornelius ever sees it, so
-    the stock desk can never open a share position in a symbol the options
-    desk is about to act on. Every other symbol's netted position passes
-    through untouched. This is the entire "one decision, one instrument"
-    fix -- Leo/Charles/Greg's agreement on SPY/QQQ is unchanged; only what
-    Cornelius is allowed to do with it changes."""
+    """Strip the options-routed strategies' slice (SPARK) out of SPY/QQQ's
+    netted target before Cornelius sees it. SPARK's view on those symbols
+    trades on the options desk -- never as shares too, so one strategy's one
+    decision never becomes two positions. Every OTHER live strategy's slice
+    of SPY/QQQ passes through and is bought as real shares, same as any
+    other ticker. Symbols outside `underlyings` pass through untouched.
+
+    Uses NettedPosition.per_trader (each contributor's pre-cap slice). The
+    recomputed weight is re-capped at the original target -- removing a
+    positive slice can only lower the blend, so `min(new_raw, old_target)`
+    is exactly `min(new_raw, max_position_pct)` without needing the config.
+    A position built without a per-strategy breakdown can't be split
+    safely, so if any routed strategy contributed it's zeroed (the old,
+    conservative behavior)."""
     import dataclasses
+    routed_strategies = frozenset(routed_strategies)
     netted = dict(regime_report.netted_positions)
     for symbol in underlyings:
         pos = netted.get(symbol)
-        if pos is not None and pos.target_weight != 0.0:
+        if pos is None or pos.target_weight == 0.0:
+            continue
+        if not any(c in routed_strategies for c in pos.contributors):
+            continue  # nobody routed to options contributed -- all shares
+        per_trader = dict(getattr(pos, "per_trader", None) or {})
+        if not per_trader:
             netted[symbol] = dataclasses.replace(pos, target_weight=0.0)
+            continue
+        kept = {k: v for k, v in per_trader.items() if k not in routed_strategies}
+        raw = sum(kept.values())
+        netted[symbol] = dataclasses.replace(
+            pos,
+            target_weight=max(0.0, min(raw, pos.target_weight)),
+            capped=pos.capped and raw > pos.target_weight,
+            contributors=[c for c in pos.contributors if c not in routed_strategies],
+            per_trader=kept,
+        )
     return dataclasses.replace(regime_report, netted_positions=netted)
 
 
 def _warn_on_legacy_share_positions(cornelius: PaperBroker, market: dict,
-                                    underlyings: set[str]) -> list[str]:
-    """Routing zeroes SPY/QQQ's target weight, and a zero target means
-    Cornelius SELLS any shares still held there. That is intentional -- the
-    options desk now owns those symbols, so leftover shares from before the
-    routing change are closed out -- but it should never happen silently."""
+                                    underlyings: set[str],
+                                    routed_positions: dict | None = None) -> list[str]:
+    """SPY/QQQ can be held as shares now, but only on behalf of strategies
+    other than SPARK. When the routed target for one of them is zero (e.g.
+    SPARK was the only strategy long it today), Cornelius SELLS any shares
+    still held there. That's correct, but on an options underlying it should
+    never happen silently -- log which shares are being closed and why.
+
+    `routed_positions` is the post-routing netted positions; if omitted,
+    every held options underlying is reported (the pre-2026-09-23 behavior)."""
     try:
         held = cornelius.load_ledger().positions
     except Exception:
         return []  # execute() will raise its own, clearer error
+
+    def target(symbol: str) -> float:
+        if routed_positions is None:
+            return 0.0
+        pos = routed_positions.get(symbol)
+        return 0.0 if pos is None else float(pos.target_weight)
+
     legacy = sorted(s for s in underlyings
-                    if s in held and s in market and held[s].shares != 0)
+                    if s in held and s in market and held[s].shares != 0
+                    and target(s) == 0.0)
     for symbol in legacy:
-        log.warning("%s: closing %.4f leftover share(s) on the stock ledger -- %s "
-                    "is routed to the options desk, so it is no longer held as shares.",
-                    symbol, held[symbol].shares, symbol)
+        log.warning("%s: closing %.4f leftover share(s) on the stock ledger -- no "
+                    "strategy other than SPARK is long %s today, and SPARK's view on "
+                    "%s trades on the options desk, not as shares.",
+                    symbol, held[symbol].shares, symbol, symbol)
     return legacy
 
 
@@ -496,7 +550,8 @@ def _print_report(config, market, frame: pd.DataFrame, benchmarks: dict,
                       if ledger is not None and config.get("options.enabled", False)
                       else set())
     _print_regime(regime_report)
-    _print_allocation(risk_report, regime_report, options_routed)
+    _print_allocation(risk_report, regime_report, options_routed,
+                      _options_routed_strategies(config))
     _print_lifecycle(recommendations)
     if ledger is not None:
         _print_ledger(market, ledger)
@@ -547,8 +602,12 @@ def _print_validation(config, risk_report: RiskReport) -> None:
 
 
 def _print_allocation(risk_report: RiskReport, regime_report: RegimeReport,
-                      options_routed: set[str] | None = None) -> None:
+                      options_routed: set[str] | None = None,
+                      routed_strategies=DEFAULT_OPTIONS_ROUTED_STRATEGIES) -> None:
     options_routed = options_routed or set()
+    routed_report = (_route_options_underlyings(regime_report, options_routed,
+                                                routed_strategies)
+                     if options_routed else regime_report)
     print(f"\n  RISK & ALLOCATION (Charles + Greg) — {len(risk_report.live_traders) or 0} of "
           f"{len(risk_report.live_traders) + len(risk_report.benched_traders)} traders live")
     if risk_report.live_traders:
@@ -581,8 +640,17 @@ def _print_allocation(risk_report: RiskReport, regime_report: RegimeReport,
             if not pos.contributors:
                 continue
             cap = "  (capped)" if pos.capped else ""
-            routed = ("  -> options desk, not shares"
-                      if symbol in options_routed else "")
+            routed = ""
+            if symbol in options_routed:
+                opt = sorted(c for c in pos.contributors if c in routed_strategies)
+                shares = routed_report.netted_positions[symbol].target_weight
+                if opt and shares > 0:
+                    routed = (f"  -> {', '.join(opt)} to options desk; "
+                              f"{shares * 100:.1f}% bought as shares")
+                elif opt:
+                    routed = f"  -> {', '.join(opt)} to options desk, no shares"
+                else:
+                    routed = "  -> bought as shares"
             print(f"    {symbol:<10} {pos.target_weight * 100:5.1f}% of capital"
                   f"{cap}  <- {', '.join(pos.contributors)}{routed}")
     else:

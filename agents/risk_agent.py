@@ -83,6 +83,11 @@ class NettedPosition:
     target_weight: float
     capped: bool
     contributors: list = field(default_factory=list)
+    # Each contributor's slice of the pre-cap blend (callsign -> weight).
+    # Lets main._route_options_underlyings() strip out just the strategy
+    # that trades a symbol on the options desk (SPARK on SPY/QQQ) and keep
+    # everyone else's share position, instead of zeroing the whole symbol.
+    per_trader: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -248,6 +253,7 @@ class RiskAgent:
         for symbol in market:
             raw = 0.0
             contributors: list[str] = []
+            per_trader: dict[str, float] = {}
             for trader in live_traders:
                 if (trader, symbol) not in eligible_pairs:
                     continue
@@ -257,10 +263,13 @@ class RiskAgent:
                 current = float(bt.position.iloc[-1])
                 if current <= 0:
                     continue
-                raw += capital_weights.get(trader, 0.0) * current
+                slice_ = capital_weights.get(trader, 0.0) * current
+                raw += slice_
                 contributors.append(trader)
+                per_trader[trader] = per_trader.get(trader, 0.0) + slice_
             netted[symbol] = NettedPosition(
                 symbol=symbol, target_weight=min(raw, self.max_position_pct),
                 capped=raw > self.max_position_pct, contributors=contributors,
+                per_trader=per_trader,
             )
         return netted

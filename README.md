@@ -78,7 +78,8 @@ message type can be turned off under `slack.notify` in `config/config.yaml`.
 ### Daily paper run (macOS launchd)
 
 Options no longer have their own run: when `options.enabled` is on, `python main.py paper`
-routes SPY/QQQ to the options desk (never opened as shares) and runs the options leg
+routes SPARK's SPY/QQQ signals to the options desk (other strategies can still buy SPY/QQQ
+as shares) and runs the options leg
 right after the stock fills. `python main.py paper-options` now just exits with an error
 pointing here. `python main.py paper` can run itself every weekday at 4:15 PM local time
 (after the US close, so SPARK reads a finished daily bar):

@@ -266,6 +266,76 @@ def test_route_options_underlyings_ignores_symbols_with_no_signal_today():
     assert routed.netted_positions == report.netted_positions
 
 
+def test_route_keeps_other_strategies_spy_slice_as_shares():
+    """SPARK's slice of SPY goes to the options desk; ORBIT's slice of the
+    same symbol is still bought as shares instead of being thrown away."""
+    from agents.regime_agent import RegimeReport
+    from agents.risk_agent import NettedPosition
+
+    report = RegimeReport(netted_positions={
+        "SPY": NettedPosition("SPY", 0.25, False, ["SPARK", "ORBIT"],
+                              per_trader={"SPARK": 0.15, "ORBIT": 0.10}),
+    })
+    routed = main._route_options_underlyings(report, {"SPY", "QQQ"})
+    spy = routed.netted_positions["SPY"]
+    assert abs(spy.target_weight - 0.10) < 1e-12
+    assert spy.contributors == ["ORBIT"]
+    assert spy.per_trader == {"ORBIT": 0.10}
+    assert report.netted_positions["SPY"].target_weight == 0.25  # not mutated
+
+
+def test_route_passes_spy_through_when_spark_did_not_contribute():
+    from agents.regime_agent import RegimeReport
+    from agents.risk_agent import NettedPosition
+
+    pos = NettedPosition("QQQ", 0.2, False, ["FLUX", "ANCHOR"],
+                         per_trader={"FLUX": 0.12, "ANCHOR": 0.08})
+    routed = main._route_options_underlyings(RegimeReport(netted_positions={"QQQ": pos}),
+                                             {"SPY", "QQQ"})
+    assert routed.netted_positions["QQQ"] == pos
+
+
+def test_route_re_applies_the_position_cap_after_removing_spark():
+    """Raw 0.50 capped at 0.25; without SPARK the rest is 0.30, which is
+    still over the cap -- it must stay capped at 0.25, not jump to 0.30."""
+    from agents.regime_agent import RegimeReport
+    from agents.risk_agent import NettedPosition
+
+    report = RegimeReport(netted_positions={
+        "SPY": NettedPosition("SPY", 0.25, True, ["SPARK", "ORBIT", "FLUX"],
+                              per_trader={"SPARK": 0.20, "ORBIT": 0.18, "FLUX": 0.12}),
+    })
+    spy = main._route_options_underlyings(report, {"SPY"}).netted_positions["SPY"]
+    assert abs(spy.target_weight - 0.25) < 1e-12
+    assert spy.capped is True
+
+    report.netted_positions["SPY"].per_trader = {"SPARK": 0.40, "ORBIT": 0.10}
+    spy = main._route_options_underlyings(report, {"SPY"}).netted_positions["SPY"]
+    assert abs(spy.target_weight - 0.10) < 1e-12
+    assert spy.capped is False
+
+
+def test_routed_strategies_come_from_config(tmp_path):
+    cfg = _options_config(tmp_path, enabled=True)
+    assert main._options_routed_strategies(cfg) == frozenset({"SPARK"})
+
+
+def test_regime_netting_records_each_strategys_slice():
+    from agents.regime_agent import RegimeAgent, TraderRegimeAdjustment
+
+    greg = RegimeAgent(load_config())
+    adjustments = [
+        TraderRegimeAdjustment("SPARK", "SPY", "trending", True, False, 0.1, 0.1, True),
+        TraderRegimeAdjustment("ORBIT", "SPY", "trending", True, False, 0.05, 0.05, True),
+        TraderRegimeAdjustment("FLUX", "SPY", "choppy", False, False, 0.1, 0.05, False),
+    ]
+    bars = _ramp_bars(n=5)
+    market = {"SPY": MarketData("SPY", "stocks", bars, "test", pd.Timestamp.now(tz="UTC"))}
+    spy = greg._net_positions(adjustments, market)["SPY"]
+    assert spy.per_trader == {"SPARK": 0.1, "ORBIT": 0.05}  # inactive FLUX excluded
+    assert abs(sum(spy.per_trader.values()) - spy.target_weight) < 1e-12
+
+
 def test_paper_options_cli_mode_is_deprecated_and_no_longer_runs(tmp_path, monkeypatch):
     """`python main.py paper-options` used to run a standalone leg; now it
     should refuse and point the operator at `paper` instead, rather than
@@ -469,6 +539,38 @@ def test_routing_closes_leftover_spy_shares_and_says_so(tmp_path, caplog):
     assert "SPY" not in after.positions
 
 
+def test_other_strategies_buy_spy_shares_and_are_not_flagged_as_leftover(tmp_path, caplog):
+    """End to end through Cornelius: ORBIT's slice of SPY is actually bought
+    as shares, and already-held SPY shares backing it are not reported as
+    'leftover' to be closed."""
+    import logging
+    from datetime import datetime, timezone
+
+    from agents.portfolio_agent import PaperBroker, Position
+    from agents.regime_agent import RegimeReport
+    from agents.risk_agent import NettedPosition
+
+    cfg = _options_config(tmp_path, enabled=True, underlyings=["SPY"])
+    broker = PaperBroker(cfg)
+    broker.ledger_path = tmp_path / "paper_ledger.json"
+
+    bars = _ramp_bars(n=5, start=400.0)
+    market = {"SPY": MarketData("SPY", "stocks", bars, "test", pd.Timestamp.now(tz="UTC"))}
+    report = RegimeReport(netted_positions={
+        "SPY": NettedPosition("SPY", 0.25, False, ["SPARK", "ORBIT"],
+                              per_trader={"SPARK": 0.15, "ORBIT": 0.10}),
+    })
+    routed = main._route_options_underlyings(report, {"SPY"})
+    after = broker.execute(market, routed.netted_positions, [])
+    assert "SPY" in after.positions and after.positions["SPY"].shares > 0
+
+    with caplog.at_level(logging.WARNING):
+        legacy = main._warn_on_legacy_share_positions(broker, market, {"SPY"},
+                                                      routed.netted_positions)
+    assert legacy == []
+    assert not any("leftover share" in r.getMessage() for r in caplog.records)
+
+
 def test_allocation_report_marks_routed_symbols(capsys):
     """Regression: the console allocation table must render (not NameError)
     when there are target positions, and flag the options-routed ones."""
@@ -481,9 +583,26 @@ def test_allocation_report_marks_routed_symbols(capsys):
     })
     main._print_allocation(RiskReport(), report, {"SPY"})
     out = capsys.readouterr().out
-    assert "SPY" in out and "-> options desk, not shares" in out
+    assert "SPY" in out and "-> SPARK to options desk, no shares" in out
     btc_line = next(l for l in out.splitlines() if "BTC/USDT" in l)
     assert "options desk" not in btc_line
+
+
+def test_allocation_report_shows_the_share_slice_of_a_routed_symbol(capsys):
+    from agents.regime_agent import RegimeReport
+    from agents.risk_agent import NettedPosition, RiskReport
+
+    report = RegimeReport(netted_positions={
+        "SPY": NettedPosition("SPY", 0.25, False, ["SPARK", "ORBIT"],
+                              per_trader={"SPARK": 0.15, "ORBIT": 0.10}),
+        "QQQ": NettedPosition("QQQ", 0.10, False, ["FLUX"], per_trader={"FLUX": 0.10}),
+    })
+    main._print_allocation(RiskReport(), report, {"SPY", "QQQ"})
+    out = capsys.readouterr().out
+    spy_line = next(l for l in out.splitlines() if l.strip().startswith("SPY"))
+    qqq_line = next(l for l in out.splitlines() if l.strip().startswith("QQQ"))
+    assert "SPARK to options desk; 10.0% bought as shares" in spy_line
+    assert "-> bought as shares" in qqq_line
 
 
 if __name__ == "__main__":

@@ -11,8 +11,13 @@ system:
 
 universe:
   stocks:
-    - SPY
-    - QQQ
+    - SPY   # SPARK's view trades as options; every other strategy can buy shares
+    - QQQ   # SPARK's view trades as options; every other strategy can buy shares
+    - AAPL
+    - MSFT
+    - NVDA
+    - GOOGL
+    - AMZN
   crypto:
     - BTC/USDT
   # ~2 years of daily bars, per the walk-forward spec
@@ -35,6 +40,11 @@ data:
     start_price:
       SPY: 450.0
       QQQ: 380.0
+      AAPL: 230.0
+      MSFT: 430.0
+      NVDA: 140.0
+      GOOGL: 190.0
+      AMZN: 220.0
       BTC/USDT: 60000.0
     annual_drift: 0.07
     annual_vol:
@@ -75,10 +85,17 @@ risk:
   risk_free_rate: 0.0
   
 options:
-  # Master switch. If true, `paper` never opens SPY/QQQ (the underlyings below)
-  # as shares -- the options desk acts on them instead, right after the stock
-  # fills. If false, `paper` trades them as shares and skips the options leg.
+  # Master switch. If true, the strategies in `routed_strategies` never buy
+  # the underlyings below as shares -- their view trades on the options desk
+  # instead, right after the stock fills. Every other strategy's slice of
+  # SPY/QQQ is still bought as shares. If false, `paper` trades SPY/QQQ as
+  # shares for every strategy and skips the options leg.
   enabled: true
+
+  # Strategies whose SPY/QQQ signal goes to the options desk instead of
+  # shares. Keep in sync with strategies/options_strategy.py (SPARK today).
+  routed_strategies:
+    - SPARK
   
   ledger_path: reports/options_ledger.json
 
