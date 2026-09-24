@@ -177,9 +177,17 @@ class ReportingAgent:
 
     def refresh_options(self, summary: dict) -> Path:
         """Called by the options leg of `paper`: cache the options snapshot and re-render
-        latest.html with the last stock context plus the new options section.
-        Only latest.html is touched -- the dated stock reports stay as they
-        were written."""
+        the dashboard with the last stock context plus the new options section.
+
+        Refreshes both latest.html AND today's dated report. The options leg
+        always runs *after* George's own dashboard write within the same
+        `paper` invocation (see main.py's run order: Cornelius -> George ->
+        console report -> options leg), so the dated file's options section
+        as first written is necessarily stale -- it reflects whatever was
+        cached in options_status.json before this leg ran, which could be a
+        previous day's state or, worse, leftover test/debug data. Keeping the
+        dated file in sync here closes that gap so an archived daily report
+        never permanently disagrees with latest.html for the rest of its day."""
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         (self.reports_dir / OPTIONS_STATUS_FILE).write_text(
             json.dumps(summary, indent=2, default=_json_default), encoding="utf-8")
@@ -193,9 +201,12 @@ class ReportingAgent:
         context["generated_at"] = datetime.now().strftime("%A, %B %d %Y — %H:%M")
         context["options"] = summary
         html = self.env.get_template("report.html.j2").render(**context)
+
         latest = self.reports_dir / "latest.html"
         latest.write_text(html, encoding="utf-8")
-        log.info("Options section refreshed in %s", latest)
+        dated = self.reports_dir / f"meridian_{datetime.now():%Y%m%d}.html"
+        dated.write_text(html, encoding="utf-8")
+        log.info("Options section refreshed in %s and %s", latest, dated)
         return latest
 
     def _load_options_summary(self) -> dict | None:

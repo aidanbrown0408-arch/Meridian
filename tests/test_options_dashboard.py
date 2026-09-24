@@ -96,6 +96,31 @@ def test_refresh_reuses_cached_stock_context():
         assert "Options Bucket" in html
 
 
+def test_refresh_options_also_updates_todays_dated_report():
+    """The options leg always runs after George's own dashboard write within
+    one `paper` invocation, so the dated report as first written necessarily
+    predates the options leg's result. refresh_options() must keep the dated
+    file in sync with latest.html rather than leaving it permanently stale
+    for the rest of the day."""
+    with tempfile.TemporaryDirectory() as tmp:
+        george = _george(tmp)
+        summary = ReportingAgent.build_options_summary(_ledger_with_position(), {})
+        latest_path = george.refresh_options(summary)
+        dated_path = Path(tmp) / f"meridian_{datetime.now():%Y%m%d}.html"
+
+        assert dated_path.exists()
+        assert dated_path.read_text() == latest_path.read_text()
+
+
+def test_isolated_reports_dir_fixture_protects_the_real_repo(tmp_path):
+    """Regression guard for the incident this fixture was added to prevent:
+    ReportingAgent(config) with no override must never resolve to the real
+    repo's reports/ directory while tests are running."""
+    george = ReportingAgent(CONFIG)
+    assert george.reports_dir != CONFIG.repo_path("reports")
+    assert str(tmp_path) in str(george.reports_dir)
+
+
 def test_no_snapshot_means_no_options_section():
     with tempfile.TemporaryDirectory() as tmp:
         george = _george(tmp)
