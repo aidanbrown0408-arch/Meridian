@@ -193,6 +193,19 @@ def test_compliance_block_propagates():
     assert qqq and all(r.blocked and r.block_reason == "stale feed" for r in qqq)
 
 
+def test_crypto_exchange_is_reachable_from_the_us():
+    """api.binance.com returns HTTP 451 to US users, which silently put
+    BTC/USDT on synthetic data for every run until 2026-09-23. Guard against
+    switching back."""
+    exchange = CONFIG.get("data.crypto_exchange")
+    assert exchange != "binance", "Binance.com blocks US users (HTTP 451)"
+    try:
+        import ccxt
+    except ImportError:
+        return
+    assert hasattr(ccxt, exchange), f"ccxt has no exchange named {exchange!r}"
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

@@ -283,8 +283,8 @@ default 10 daily paper runs) before it will ever flag anything — on a fresh le
 `python main.py paper` will never produce a live-drift recommendation on day one, by
 design.
 
-In a sandboxed environment with no outbound access to Yahoo or Binance, all three
-symbols fall back to synthetic data and the report flags them. That path is working as
+In a sandboxed environment with no outbound access to Yahoo or Kraken, every
+symbol falls back to synthetic data and the report flags them. That path is working as
 intended — it is not a data bug.
 
 ## Next: Phase 5

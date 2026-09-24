@@ -147,7 +147,7 @@ class DataAgent:
         import ccxt
 
         if self._exchange is None:
-            exchange_id = self.config.get("data.crypto_exchange", "binance")
+            exchange_id = self.config.get("data.crypto_exchange", "kraken")
             self._exchange = getattr(ccxt, exchange_id)({"enableRateLimit": True})
 
         since = int((time.time() - (self.history_days + 10) * 86400) * 1000)

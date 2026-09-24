@@ -31,7 +31,10 @@ capital:
 data:
   stock_source: yfinance
   crypto_source: ccxt
-  crypto_exchange: binance
+  # Kraken, not Binance: api.binance.com returns HTTP 451 to US users, so every
+  # BTC/USDT fetch before 2026-09-23 fell back to synthetic data. Kraken's public
+  # API serves BTC/USDT daily bars to the US (~720 days of history per request).
+  crypto_exchange: kraken
   # If a real source fails, Wong generates a seeded random walk instead so the
   # pipeline never hard-fails. Everything downstream is flagged synthetic.
   allow_synthetic_fallback: true

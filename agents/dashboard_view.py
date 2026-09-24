@@ -36,7 +36,7 @@ DEFAULT_STYLES = {
 TEAM_ROSTER = [
     ("wong", "Wong", "Data Agent", "stock",
      "Sources daily OHLCV history across the universe: yfinance for equities, ccxt against "
-     "Binance for crypto. When a feed fails, falls back to a seeded random walk so the pipeline "
+     "Kraken for crypto. When a feed fails, falls back to a seeded random walk so the pipeline "
      "never breaks, and marks the result synthetic so nothing downstream mistakes it for a "
      "market."),
     ("david", "David", "Compliance Agent", "stock",
