@@ -1,7 +1,10 @@
 #!/bin/bash
 # Install (or remove) a launchd job that runs `main.py paper` (stock desk +
-# options leg) every weekday at 4:15 PM local time (after the US close, so SPARK
-# sees a finished daily bar).
+# options leg) every weekday at 8:15 PM local time. That's after the 4 PM US
+# close (stocks have a finished daily bar) and after 00:00 UTC (8 PM Eastern
+# in daylight time, 7 PM in standard time), when BTC's daily candle closes --
+# so every ticker is decided on a complete day. Wong drops the new, still-
+# forming crypto candle (see DataAgent._drop_open_crypto_bar).
 #
 #   bash scripts/install_daily_options.sh            # install / reinstall
 #   bash scripts/install_daily_options.sh uninstall  # remove
@@ -73,7 +76,7 @@ cat <<PLISTHEAD
   <array>
 PLISTHEAD
 for wd in 1 2 3 4 5; do
-  echo "    <dict><key>Weekday</key><integer>$wd</integer><key>Hour</key><integer>16</integer><key>Minute</key><integer>15</integer></dict>"
+  echo "    <dict><key>Weekday</key><integer>$wd</integer><key>Hour</key><integer>20</integer><key>Minute</key><integer>15</integer></dict>"
 done
 cat <<PLISTTAIL
   </array>
@@ -96,7 +99,7 @@ launchctl bootstrap "$DOMAIN" "$PLIST"
 sleep 1
 if launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; then
   echo
-  echo "Installed and verified loaded: $LABEL -- weekdays at 4:15 PM local time"
+  echo "Installed and verified loaded: $LABEL -- weekdays at 8:15 PM local time"
   echo "(plus once at login/reboot, via RunAtLoad, in case a window was missed)."
   echo "  python: $PYTHON_BIN"
   echo "  log:    $REPO_DIR/reports/launchd_paper_options.log"

@@ -26,6 +26,7 @@ import pandas as pd
 from agents.data_agent import MarketData
 from agents.risk_agent import NettedPosition
 from backtester.engine import BPS, CostModel
+from utils.dates import local_date
 from utils.config import Config
 from utils.logging_setup import get_logger
 
@@ -184,7 +185,8 @@ class PaperBroker:
         self._record_shadow(ledger, market, regime_adjustments or [], today)
 
         equity_after = ledger.mark_to_market(prices)
-        ledger.equity_history.append({"date": today.date().isoformat(), "equity": equity_after})
+        ledger.equity_history.append({"date": local_date(self.config, today),
+                                      "equity": equity_after})
         # Keep the history from growing without bound; ~2 years of daily marks is plenty.
         ledger.equity_history = ledger.equity_history[-800:]
 
@@ -228,7 +230,7 @@ class PaperBroker:
                 entry_date = current.entry_date
             ledger.positions[symbol] = Position(symbol, asset_class, new_shares,
                                                 entry_price, entry_date)
-            ledger.trades.append(Trade(today.date().isoformat(), symbol, "buy",
+            ledger.trades.append(Trade(local_date(self.config, today), symbol, "buy",
                                        delta_shares, price, cost, "rebalance to target"))
         else:
             sell_shares = min(abs(delta_shares), current_shares)
@@ -240,7 +242,7 @@ class PaperBroker:
             else:
                 ledger.positions[symbol] = Position(symbol, asset_class, remaining,
                                                     current.entry_price, current.entry_date)
-            ledger.trades.append(Trade(today.date().isoformat(), symbol, "sell",
+            ledger.trades.append(Trade(local_date(self.config, today), symbol, "sell",
                                        sell_shares, price, cost, "rebalance to target"))
 
     def _record_shadow(self, ledger: PaperLedger, market: dict[str, MarketData],
@@ -259,7 +261,7 @@ class PaperBroker:
             by_trader[adj.strategy] = by_trader.get(adj.strategy, 0.0) + weighted
             counts[adj.strategy] = counts.get(adj.strategy, 0) + 1
 
-        date_str = today.date().isoformat()
+        date_str = local_date(self.config, today)
         for trader, ret in by_trader.items():
             history = ledger.trader_shadow.setdefault(trader, [])
             history.append({"date": date_str, "return": ret})
@@ -285,7 +287,7 @@ class PaperBroker:
             cost = pos.shares * price * cost_model.one_way_bps * BPS
             proceeds = pos.shares * price - cost
             ledger.cash += proceeds
-            ledger.trades.append(Trade(today.date().isoformat(), symbol, "sell",
+            ledger.trades.append(Trade(local_date(self.config, today), symbol, "sell",
                                        pos.shares, price, cost, "killswitch flatten"))
             del ledger.positions[symbol]
 

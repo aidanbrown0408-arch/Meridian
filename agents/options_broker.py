@@ -34,6 +34,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from agents.options_risk_agent import OptionsProposal, OptionsRiskAgent
+from utils.dates import local_date
 from utils.config import Config
 from utils.logging_setup import get_logger
 
@@ -280,7 +281,7 @@ class OptionsBroker:
             self._consider(ledger, proposal, prices, today)
 
         equity_after = ledger.mark_to_market(prices)
-        ledger.equity_history.append({"date": today.date().isoformat(),
+        ledger.equity_history.append({"date": local_date(self.config, today),
                                       "equity": equity_after})
         ledger.equity_history = ledger.equity_history[-800:]
 
@@ -339,7 +340,7 @@ class OptionsBroker:
             ledger.positions[position.key] = position
 
         ledger.trades.append(OptionsTrade(
-            date=today.date().isoformat(), underlying=position.underlying,
+            date=local_date(self.config, today), underlying=position.underlying,
             option_type=position.option_type, strike=position.strike,
             expiration=position.expiration, side="open", contracts=position.contracts,
             premium_per_contract=float(proposal.premium_per_contract), cost=cost,
@@ -374,7 +375,7 @@ class OptionsBroker:
         ledger.cash += proceeds
         ledger.realized_pnl += pnl
         ledger.trades.append(OptionsTrade(
-            date=today.date().isoformat(), underlying=position.underlying,
+            date=local_date(self.config, today), underlying=position.underlying,
             option_type=position.option_type, strike=position.strike,
             expiration=position.expiration, side="close", contracts=position.contracts,
             premium_per_contract=premium_per_contract, cost=cost, cash_delta=proceeds,

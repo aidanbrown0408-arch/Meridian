@@ -81,8 +81,9 @@ Options no longer have their own run: when `options.enabled` is on, `python main
 routes SPARK's SPY/QQQ signals to the options desk (other strategies can still buy SPY/QQQ
 as shares) and runs the options leg
 right after the stock fills. `python main.py paper-options` now just exits with an error
-pointing here. `python main.py paper` can run itself every weekday at 4:15 PM local time
-(after the US close, so SPARK reads a finished daily bar):
+pointing here. `python main.py paper` can run itself every weekday at 8:15 PM local time
+(after the 4 PM US close and after BTC's daily candle closes at 00:00 UTC, so every
+ticker is decided on a finished daily bar; ledger rows are dated in Eastern time):
 
 ```bash
 bash scripts/install_daily_options.sh              # install / reinstall
@@ -92,7 +93,7 @@ bash scripts/install_daily_options.sh uninstall    # remove
 
 The installer bakes in whichever `python3` is on your Terminal PATH (override with
 `MERIDIAN_PYTHON=/path/to/python3`). Each run appends to
-`reports/launchd_paper_options.log`. If the Mac is asleep at 4:15, launchd runs the
+`reports/launchd_paper_options.log`. If the Mac is asleep at 8:15, launchd runs the
 missed job once on wake. Weekends are skipped; market holidays are not (the run is
 harmless: no new signal bar, just an extra equity mark).
 

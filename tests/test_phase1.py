@@ -206,6 +206,53 @@ def test_crypto_exchange_is_reachable_from_the_us():
     assert hasattr(ccxt, exchange), f"ccxt has no exchange named {exchange!r}"
 
 
+def test_open_crypto_candle_is_dropped():
+    """At the 8:15 PM Eastern run it's already 00:15 UTC: the newest candle is
+    15 minutes old. Only fully closed UTC days may reach the strategies."""
+    idx = pd.date_range(end=pd.Timestamp("2026-09-24"), periods=5, freq="D")
+    bars = pd.DataFrame({"open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0,
+                         "volume": 1.0}, index=idx)
+    now = pd.Timestamp("2026-09-24 00:15", tz="UTC")
+    out = DataAgent._drop_open_crypto_bar("BTC/USDT", bars, now=now)
+    assert out.index[-1] == pd.Timestamp("2026-09-23")
+    assert len(out) == 4
+    # Mid-day UTC: same rule, today's candle still forming.
+    out = DataAgent._drop_open_crypto_bar("BTC/USDT", bars,
+                                          now=pd.Timestamp("2026-09-24 20:15", tz="UTC"))
+    assert out.index[-1] == pd.Timestamp("2026-09-23")
+    # A frame that already ends yesterday is untouched.
+    assert len(DataAgent._drop_open_crypto_bar("BTC/USDT", out, now=now)) == 4
+
+
+def test_crypto_fetch_never_returns_the_open_candle(monkeypatch):
+    wong = DataAgent(CONFIG)
+    wong.use_cache = False
+    today = pd.Timestamp.now(tz="UTC").normalize().tz_localize(None)
+    idx = pd.date_range(end=today, periods=300, freq="D")
+    raw = pd.DataFrame({"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0,
+                        "volume": 1.0}, index=idx)
+    monkeypatch.setattr(DataAgent, "_fetch_crypto", lambda self, s: raw)
+    data = wong.fetch("BTC/USDT")
+    assert data.data_source != "synthetic"
+    assert data.bars.index[-1] < today
+
+
+def test_ledger_labels_use_eastern_dates():
+    from datetime import datetime, timezone
+    from utils.dates import local_date
+    # 8:15 PM EDT on Sep 23 == 00:15 UTC on Sep 24 -> labelled Sep 23.
+    assert local_date(CONFIG, datetime(2026, 9, 24, 0, 15, tzinfo=timezone.utc)) == "2026-09-23"
+    # 8:15 PM EST on Nov 2 == 01:15 UTC Nov 3 -> Nov 2.
+    assert local_date(CONFIG, datetime(2026, 11, 3, 1, 15, tzinfo=timezone.utc)) == "2026-11-02"
+    assert local_date(None, datetime(2026, 9, 23, 16, 0, tzinfo=timezone.utc)) == "2026-09-23"
+
+
+def test_install_script_schedules_after_the_utc_close():
+    script = (Path(__file__).resolve().parent.parent / "scripts"
+              / "install_daily_options.sh").read_text()
+    assert "<key>Hour</key><integer>20</integer><key>Minute</key><integer>15</integer>" in script
+
+
 if __name__ == "__main__":
     failures = 0
     for name, fn in sorted(globals().items()):

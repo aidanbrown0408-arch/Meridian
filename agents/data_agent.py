@@ -104,6 +104,8 @@ class DataAgent:
         asset_class = self.config.asset_class(symbol)
 
         cached = self._read_cache(symbol) if self.use_cache else None
+        if cached is not None and asset_class == "crypto":
+            cached = self._drop_open_crypto_bar(symbol, cached)
         if cached is not None:
             log.info("Loaded %s from cache: %d bars", symbol, len(cached))
             return MarketData(symbol, asset_class, cached, "cache",
@@ -115,6 +117,8 @@ class DataAgent:
             else:
                 bars, source = self._fetch_stock(symbol), self.config.get("data.stock_source")
             bars = self._normalize(bars)
+            if asset_class == "crypto":
+                bars = self._drop_open_crypto_bar(symbol, bars)
             if bars.empty:
                 raise ValueError("source returned no rows")
             if self.use_cache:
@@ -222,6 +226,26 @@ class DataAgent:
                           datetime.now(timezone.utc), [note])
 
     # ------------------------------------------------------------------- helpers
+
+    @staticmethod
+    def _drop_open_crypto_bar(symbol: str, bars: pd.DataFrame,
+                              now: pd.Timestamp | None = None) -> pd.DataFrame:
+        """Crypto trades 24/7 and exchanges cut daily candles at 00:00 UTC, so
+        the newest candle is always still forming. Strategies were validated
+        on complete bars; deciding on a half-formed one (e.g. 15 minutes old
+        at the 8:15 PM Eastern run) would act on a close that doesn't exist
+        yet. Drop any candle dated today-or-later in UTC, leaving the last
+        fully closed day as the decision bar."""
+        if bars.empty:
+            return bars
+        now = now if now is not None else pd.Timestamp.now(tz="UTC")
+        today_utc = now.tz_convert("UTC").normalize().tz_localize(None)
+        complete = bars[bars.index < today_utc]
+        dropped = len(bars) - len(complete)
+        if dropped:
+            log.info("%s: dropped %d in-progress daily candle(s) (UTC day %s not closed yet)",
+                     symbol, dropped, today_utc.date())
+        return complete
 
     @staticmethod
     def _normalize(bars: pd.DataFrame) -> pd.DataFrame:

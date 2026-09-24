@@ -64,7 +64,7 @@ fi
 
 # Idempotent against a duplicate fire the same day (RunAtLoad catching up
 # right after the scheduled StartCalendarInterval already ran, a manual
-# `launchctl kickstart` on top of the normal 4:15 PM fire, etc.) -- running
+# `launchctl kickstart` on top of the normal 8:15 PM fire, etc.) -- running
 # main.py paper twice in one day would double-count that day's fills.
 today="$(date '+%Y-%m-%d')"
 if [ -f "$LOG_FILE" ] && grep -q "^===== $today .* paper exit 0 =====" "$LOG_FILE"; then
