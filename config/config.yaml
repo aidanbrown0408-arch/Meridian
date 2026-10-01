@@ -196,7 +196,11 @@ validation:
   # Revisit toward 5 if `universe.history_days` is ever raised materially.
   folds: 3
   min_folds_passing: 2
-  min_sharpe: 0.5
+  # 0.7, not 0.5: at 0.5 the eligible set produces ~50 trades/yr, the very
+  # top of the intended 1x-weekly-to-1x-fortnightly band, so ordinary
+  # variation pushes it over. 0.7 lands ~44/yr (~0.85/wk), mid-band, and
+  # does it by raising the quality bar rather than throttling arbitrarily.
+  min_sharpe: 0.7
   # A fold with fewer trades than this is NOT a failed fold -- it is no
   # evidence, and is excluded from the verdict entirely. Counting it as a
   # failure penalised every strategy that correctly sat flat, which is why
