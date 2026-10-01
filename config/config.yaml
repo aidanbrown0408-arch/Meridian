@@ -188,10 +188,28 @@ regime:
   confirmation_days: 2
 
 validation:
-  folds: 5
-  min_folds_passing: 3
+  # 3 folds, not 5: with ~506 bars of history a 5-way split gives ~101-bar
+  # folds, and these strategies trade ~2-5x/year, so almost no fold saw
+  # enough trades to be gradeable. 3 folds gives ~168-bar windows, which
+  # restores a measurable trade count per fold. Fewer independent
+  # out-of-sample windows is a real cost; it beats five ungradeable ones.
+  # Revisit toward 5 if `universe.history_days` is ever raised materially.
+  folds: 3
+  min_folds_passing: 2
   min_sharpe: 0.5
+  # A fold with fewer trades than this is NOT a failed fold -- it is no
+  # evidence, and is excluded from the verdict entirely. Counting it as a
+  # failure penalised every strategy that correctly sat flat, which is why
+  # 0/48 combinations were eligible for two weeks in Sept 2026.
   min_trades_per_fold: 3
+  # How many folds must be gradeable (>= min_trades_per_fold) before a
+  # verdict is possible at all. Below this the combination is "undecidable"
+  # and is benched, not failed.
+  min_gradeable_folds: 2
+  # Fraction of the GRADEABLE folds that must clear Sharpe/drawdown.
+  # 0.6 keeps the old "majority of folds" intent now that the denominator
+  # is gradeable folds rather than all folds.
+  pass_fraction: 0.6
 
 strategies:
   ORBIT:

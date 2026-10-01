@@ -376,14 +376,42 @@ def test_gate_blocks_on_choppy_regime():
 
 
 def test_gate_blocks_when_trending_but_unvalidated():
-    """Default _trend() (seed=11, drift=0.6): trending per Greg, but SPARK
-    only clears 2/5 walk-forward folds on this particular series -- below
-    the 3/5 bar, so the gate should still block it."""
-    market = _market(_trend())
+    """seed=21, drift=0.6: trending per Greg, but SPARK clears only 1 of its
+    3 gradeable walk-forward folds -- below `validation.pass_fraction`, so
+    the gate still blocks. This is a genuine performance failure, as
+    distinct from the undecidable case below."""
+    market = _market(_trend(seed=21, annual_drift=0.6))
     gates = _market_gates(CONFIG, market, ["SPY"])
     assert gates["SPY"].regime == "trending"
     assert not gates["SPY"].passed
     assert "fails validation" in gates["SPY"].reason
+    assert "undecidable" not in gates["SPY"].reason
+
+
+def test_gate_blocks_when_trending_but_undecidable():
+    """seed=4, drift=0.3: trending, but SPARK trades too rarely on this
+    series for enough folds to be gradeable. The gate must still block --
+    and must say "undecidable", not report it as a performance failure."""
+    market = _market(_trend(seed=4, annual_drift=0.3))
+    gates = _market_gates(CONFIG, market, ["SPY"])
+    assert gates["SPY"].regime == "trending"
+    assert not gates["SPY"].passed
+    assert "undecidable" in gates["SPY"].reason
+
+
+def test_gate_reports_every_failing_condition_not_just_the_first():
+    """Regression test for the Sept 2026 stall: a choppy tape AND a failing
+    validation must BOTH appear in the reason. The old implementation
+    returned on the regime check, so a shut validation gate was invisible
+    behind "not trending" for two weeks."""
+    market = _market(_chop())
+    gates = _market_gates(CONFIG, market, ["SPY"])
+    reason = gates["SPY"].reason
+    assert not gates["SPY"].passed
+    assert "not trending" in reason
+    # The validation verdict is evaluated and reported even though the
+    # regime check already failed.
+    assert "SPARK" in reason
 
 
 def test_gate_disabled_returns_empty():

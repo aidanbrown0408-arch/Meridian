@@ -76,10 +76,40 @@ def test_walkforward_splits_into_configured_folds():
     assert len(result.folds) == result.folds_total
 
 
-def test_walkforward_majority_rule_is_3_of_5():
+def test_walkforward_majority_rule_uses_gradeable_folds():
+    """The bar is a majority of the GRADEABLE folds, not of all folds.
+
+    Changed Sept 2026: with 5 folds over ~2 years of history almost no fold
+    saw `min_trades_per_fold` trades, so every combination failed on
+    insufficient evidence rather than on performance. Folds below the trade
+    floor are now excluded from the verdict entirely."""
     validator = WalkForwardValidator(CONFIG)
-    assert validator.min_folds_passing == 3
-    assert validator.folds_n == 5
+    assert validator.folds_n == 3
+    assert validator.pass_fraction == 0.6
+    assert validator.min_gradeable_folds == 2
+
+
+def test_low_trade_fold_is_excluded_not_failed():
+    """A fold with too few trades is no evidence, not a loss."""
+    validator = WalkForwardValidator(CONFIG)
+    strategy = build_strategies(CONFIG)["REVERT"]
+    result = validator.validate(strategy, _noise(n=400), "TEST", "stocks")
+    for fold in result.folds:
+        if fold.trades < validator.min_trades:
+            assert not fold.gradeable
+            assert "not graded" in fold.reason
+    assert result.gradeable_folds == sum(1 for f in result.folds if f.gradeable)
+
+
+def test_too_few_gradeable_folds_is_undecidable_not_a_failure():
+    """A strategy that rarely trades is benched as undecidable, and is
+    reported differently from one that traded and performed badly."""
+    validator = WalkForwardValidator(CONFIG)
+    strategy = build_strategies(CONFIG)["REVERT"]
+    result = validator.validate(strategy, _noise(n=120), "TEST", "stocks")
+    if result.gradeable_folds < validator.min_gradeable_folds:
+        assert result.undecidable
+        assert not result.passed
 
 
 def test_walkforward_too_short_history_fails_cleanly():

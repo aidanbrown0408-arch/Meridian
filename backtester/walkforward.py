@@ -43,6 +43,7 @@ class WalkForwardFold:
     max_drawdown: float = 0.0
     trades: int = 0
     passed: bool = False
+    gradeable: bool = True
     reason: str = ""
 
 
@@ -55,14 +56,39 @@ class WalkForwardResult:
     folds_total: int
     min_folds_passing: int
     folds: list[WalkForwardFold] = field(default_factory=list)
+    pass_fraction: float = 0.6
+    min_gradeable_folds: int = 2
 
     @property
     def folds_passed(self) -> int:
         return sum(1 for f in self.folds if f.passed)
 
     @property
+    def gradeable_folds(self) -> int:
+        """Folds that saw enough trades to constitute evidence either way."""
+        return sum(1 for f in self.folds if f.gradeable)
+
+    @property
+    def undecidable(self) -> bool:
+        """Too few gradeable folds to form a verdict at all. Distinct from
+        failing: the strategy did not perform badly, it simply did not act
+        often enough over this history to be measured."""
+        return self.gradeable_folds < self.min_gradeable_folds
+
+    @property
     def passed(self) -> bool:
-        return self.folds_total > 0 and self.folds_passed >= self.min_folds_passing
+        """A majority of the GRADEABLE folds must clear the bar.
+
+        Folds with too few trades are excluded from both numerator and
+        denominator rather than counted as failures: a strategy that
+        correctly sat flat through a fold has produced no evidence, and
+        scoring that as a loss silently penalises every low-frequency
+        trader. If too few folds are gradeable, the combination is
+        undecidable and does not pass."""
+        if self.folds_total <= 0 or self.undecidable:
+            return False
+        needed = max(1, int(round(self.gradeable_folds * self.pass_fraction)))
+        return self.folds_passed >= needed
 
     def to_row(self) -> dict:
         return {
@@ -70,6 +96,8 @@ class WalkForwardResult:
             "symbol": self.symbol,
             "folds_passed": self.folds_passed,
             "folds_total": self.folds_total,
+            "gradeable_folds": self.gradeable_folds,
+            "undecidable": self.undecidable,
             "passed": self.passed,
         }
 
@@ -85,6 +113,11 @@ class WalkForwardValidator:
         self.min_folds_passing = int(config.get("validation.min_folds_passing"))
         self.min_sharpe = float(config.get("validation.min_sharpe"))
         self.min_trades = int(config.get("validation.min_trades_per_fold"))
+        # A fold below `min_trades` is treated as NO EVIDENCE and excluded
+        # from the verdict, not as a failed fold. These two keys say how
+        # much evidence is needed before a verdict is possible at all.
+        self.min_gradeable_folds = int(config.get("validation.min_gradeable_folds", 2))
+        self.pass_fraction = float(config.get("validation.pass_fraction", 0.6))
         self.max_drawdown_limit = float(config.get("risk.max_strategy_drawdown"))
         self.risk_free_rate = float(config.get("risk.risk_free_rate", 0.0))
 
@@ -93,6 +126,8 @@ class WalkForwardValidator:
         result = WalkForwardResult(
             strategy=strategy.callsign, symbol=symbol,
             folds_total=self.folds_n, min_folds_passing=self.min_folds_passing,
+            pass_fraction=self.pass_fraction,
+            min_gradeable_folds=self.min_gradeable_folds,
         )
         if len(bars) < self.folds_n:
             log.warning("%s/%s: too few bars (%d) to split into %d folds",
@@ -112,7 +147,7 @@ class WalkForwardValidator:
             if idx[-1] < strategy.warmup:
                 result.folds.append(WalkForwardFold(
                     index=i, test_start=test_start, test_end=test_end,
-                    bars=len(idx), passed=False,
+                    bars=len(idx), passed=False, gradeable=False,
                     reason=f"fold ends before warmup ({strategy.warmup} bars)",
                 ))
                 continue
@@ -134,11 +169,13 @@ class WalkForwardValidator:
                 net, position=fold_position, asset_class=asset_class,
                 risk_free_rate=self.risk_free_rate, total_cost=float(fold_costs.sum()),
             )
+            gradeable = summary.trades >= self.min_trades
             passed, reason = self._grade(summary)
             result.folds.append(WalkForwardFold(
                 index=i, test_start=test_start, test_end=test_end, bars=len(idx),
                 sharpe=summary.sharpe, max_drawdown=summary.max_drawdown,
-                trades=summary.trades, passed=passed, reason=reason,
+                trades=summary.trades, passed=passed, gradeable=gradeable,
+                reason=reason,
             ))
 
         log.debug("%s/%s: %d/%d folds passed", strategy.callsign, symbol,
@@ -147,7 +184,10 @@ class WalkForwardValidator:
 
     def _grade(self, summary: PerformanceSummary) -> tuple[bool, str]:
         if summary.trades < self.min_trades:
-            return False, f"only {summary.trades} trade(s), need {self.min_trades}"
+            # Not a failure — no evidence. `gradeable=False` keeps this fold
+            # out of the verdict entirely (see WalkForwardResult.passed).
+            return False, (f"not graded: only {summary.trades} trade(s), "
+                           f"need {self.min_trades} for evidence")
         if summary.sharpe < self.min_sharpe:
             return False, f"Sharpe {summary.sharpe:.2f} below {self.min_sharpe:.2f}"
         if summary.max_drawdown > self.max_drawdown_limit:

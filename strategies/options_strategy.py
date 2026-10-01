@@ -247,38 +247,50 @@ def _market_gates(config: Config, market: dict[str, MarketData],
             continue
 
         classification = regime_agent.classify(data.bars, symbol)
-        if classification.regime != "trending":
-            gates[symbol] = MarketGate(
-                symbol, classification.regime, False,
-                f"regime is {classification.regime}, not trending ({classification.detail})")
-            continue
+        trending = classification.regime == "trending"
+        regime_note = (f"regime is {classification.regime}, not trending "
+                       f"({classification.detail})")
 
+        # Both conditions are evaluated every run, even when the first has
+        # already failed. Returning early here hid the validation verdict
+        # for two weeks in Sept 2026: the log only ever showed "choppy
+        # market", so a shut validation gate was indistinguishable from a
+        # quiet tape. Cost is one extra backtest per underlying per day.
+        validated = False
+        validation_note = ""
         bt = engine.run(trigger, data.bars, symbol, asset_class=data.asset_class,
                         data_source=data.data_source)
         if bt.blocked:
-            gates[symbol] = MarketGate(
-                symbol, classification.regime, False,
-                f"trending, but {trigger_callsign} has insufficient history to grade "
-                f"({bt.block_reason})")
-            continue
-
-        wf = validator.validate(trigger, data.bars, symbol, data.asset_class)
-        candidate = TraderCandidate(
-            strategy=trigger_callsign, symbol=symbol, asset_class=data.asset_class,
-            walkforward=wf, backtest_max_drawdown=bt.summary.max_drawdown,
-            annual_vol=bt.summary.annual_vol, sharpe=bt.summary.sharpe,
-        )
-        # Reuse Charles's own grading verbatim (walk-forward pass/fail, then
-        # the hard full-period drawdown cap) so this can never silently
-        # drift from what "validated" means on the stock side.
-        eligible, reject_reason = charles._grade(candidate)
-        if not eligible:
-            gates[symbol] = MarketGate(
-                symbol, classification.regime, False,
-                f"trending, but {trigger_callsign} fails validation: {reject_reason}")
+            validation_note = (f"{trigger_callsign} has insufficient history to "
+                               f"grade ({bt.block_reason})")
         else:
+            wf = validator.validate(trigger, data.bars, symbol, data.asset_class)
+            candidate = TraderCandidate(
+                strategy=trigger_callsign, symbol=symbol, asset_class=data.asset_class,
+                walkforward=wf, backtest_max_drawdown=bt.summary.max_drawdown,
+                annual_vol=bt.summary.annual_vol, sharpe=bt.summary.sharpe,
+            )
+            # Reuse Charles's own grading verbatim (walk-forward pass/fail, then
+            # the hard full-period drawdown cap) so this can never silently
+            # drift from what "validated" means on the stock side.
+            validated, reject_reason = charles._grade(candidate)
+            if not validated:
+                validation_note = f"{trigger_callsign} fails validation: {reject_reason}"
+
+        if trending and validated:
             gates[symbol] = MarketGate(symbol, classification.regime, True,
                                        "trending & validated")
+            continue
+
+        # Report every failing condition, not just the first one, so the
+        # operator sees the full set of things that must change.
+        blockers = []
+        if not trending:
+            blockers.append(regime_note)
+        if not validated:
+            blockers.append(validation_note)
+        gates[symbol] = MarketGate(symbol, classification.regime, False,
+                                   "; ".join(blockers))
     return gates
 
 

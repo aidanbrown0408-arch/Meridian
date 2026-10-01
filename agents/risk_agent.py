@@ -153,9 +153,18 @@ class RiskAgent:
     # ------------------------------------------------------------------ steps
 
     def _grade(self, candidate: TraderCandidate) -> tuple[bool, str]:
-        if not candidate.walkforward.passed:
-            return False, (f"walk-forward {candidate.walkforward.folds_passed}/"
-                           f"{candidate.walkforward.folds_total} folds")
+        wf = candidate.walkforward
+        if wf.undecidable:
+            # Distinct from failing: too few folds saw enough trades to be
+            # evidence either way. Benched for lack of data, not for bad
+            # performance -- the reason string says so explicitly so this
+            # never reads as "the strategy lost money".
+            return False, (f"undecidable: only {wf.gradeable_folds}/"
+                           f"{wf.folds_total} folds had enough trades to grade "
+                           f"(need {wf.min_gradeable_folds})")
+        if not wf.passed:
+            return False, (f"walk-forward {wf.folds_passed}/{wf.gradeable_folds} "
+                           f"gradeable folds")
         if candidate.backtest_max_drawdown > self.max_strategy_drawdown:
             return False, (f"max drawdown {candidate.backtest_max_drawdown:.1%} exceeds "
                            f"{self.max_strategy_drawdown:.1%}")

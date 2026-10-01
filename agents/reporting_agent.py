@@ -25,6 +25,8 @@ from agents.compliance_agent import ComplianceReport
 from agents.dashboard_view import make_view_global
 from agents.data_agent import MarketData
 from agents.regime_agent import RegimeReport
+from collections import Counter
+
 from agents.risk_agent import RiskReport
 from backtester.engine import BacktestResult
 from utils.config import Config
@@ -455,14 +457,28 @@ class ReportingAgent:
         else:
             lines.append(DeskLine("\U0001F6D1", "David", "Compliance", "No blocks."))
 
+        # Always state the eligibility count and, when nothing qualified, the
+        # single most common reason. Without this a shut gate and a quiet
+        # market produce identical standups, which is how the Sept 2026
+        # "0/48 eligible" stall went unnoticed for two weeks.
+        n_elig = sum(1 for c in risk_report.candidates if c.eligible)
+        n_total = len(risk_report.candidates)
         if risk_report.live_traders:
             weights = ", ".join(f"{t} {risk_report.capital_weights.get(t, 0.0):.0%}"
                                 for t in risk_report.live_traders)
-            lines.append(DeskLine("⚖️", "Charles", "Risk", f"Live today: {weights}."))
-        else:
             lines.append(DeskLine("⚖️", "Charles", "Risk",
-                                  "No strategy cleared validation today — closest "
-                                  "contenders are in the full report.", "warn"))
+                                  f"{n_elig}/{n_total} combinations eligible. "
+                                  f"Live today: {weights}."))
+        else:
+            reasons = Counter(c.reject_reason.split(":")[0].split("(")[0].strip()
+                              for c in risk_report.candidates if c.reject_reason)
+            top = reasons.most_common(1)
+            detail = (f" Most common blocker: {top[0][0]} ({top[0][1]}/{n_total})."
+                      if top else "")
+            lines.append(DeskLine("⚖️", "Charles", "Risk",
+                                  f"{n_elig}/{n_total} combinations eligible — nothing "
+                                  f"cleared validation, so no stock trades today."
+                                  f"{detail}", "warn"))
 
         if regime_report.regimes:
             regimes = ", ".join(f"{s} {c.regime}" for s, c in regime_report.regimes.items())
