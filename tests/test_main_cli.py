@@ -317,7 +317,7 @@ def test_route_re_applies_the_position_cap_after_removing_spark():
 
 def test_routed_strategies_come_from_config(tmp_path):
     cfg = _options_config(tmp_path, enabled=True)
-    assert main._options_routed_strategies(cfg) == frozenset({"SPARK"})
+    assert main._options_routed_strategies(cfg) == frozenset({"SPARK", "ANCHOR", "FLUX"})
 
 
 def test_regime_netting_records_each_strategys_slice():

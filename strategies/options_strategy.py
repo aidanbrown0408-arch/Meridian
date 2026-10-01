@@ -107,6 +107,26 @@ class MarketGate:
     regime: str
     passed: bool
     reason: str
+    trigger: str = ""
+    # Walk-forward Sharpe of this trigger on this underlying. Used only to
+    # rank competing proposals when several triggers fire on the same run
+    # and Theo's concurrency cap cannot admit them all.
+    sharpe: float = 0.0
+
+
+def _trigger_callsigns(config: Config) -> list[str]:
+    """The equity strategies allowed to trigger an options proposal.
+
+    `options.strategy.trigger_strategies` (a list) is the current key. The
+    original singular `trigger_strategy` is still honoured so existing
+    configs keep working, and so this stays in sync with
+    `options.routed_strategies` in main.py -- a strategy that triggers
+    options must also be routed out of shares, or its view would be taken
+    twice."""
+    listed = config.get("options.strategy.trigger_strategies", None)
+    if listed:
+        return [str(c) for c in listed]
+    return [str(config.get("options.strategy.trigger_strategy", "SPARK"))]
 
 
 def _donchian_breakdown(bars: pd.DataFrame, entry_window: int, exit_window: int) -> pd.Series:
@@ -131,166 +151,200 @@ def _donchian_breakdown(bars: pd.DataFrame, entry_window: int, exit_window: int)
 
 
 def check_signals(config: Config, market: dict[str, MarketData]) -> list[SignalCheck]:
-    """Today's read of the call trigger (SPARK breakout) for every configured
-    options underlying Wong actually fetched. A symbol Wong didn't return, or
-    that doesn't have enough history yet, reads as flat with a reason —
+    """Today's call-trigger read for every (trigger, underlying) pair.
+
+    One check per trigger per underlying: several strategies may hold a view
+    on the same name on the same day, and the console report shows each
+    one's read rather than collapsing them. A symbol Wong didn't return, or
+    that doesn't have enough history yet, reads as flat with a reason --
     never guessed at."""
-    trigger_callsign = str(config.get("options.strategy.trigger_strategy", "SPARK"))
     underlyings = list(config.get("options.underlyings"))
-    trigger = build_strategies(config).get(trigger_callsign)
-    if trigger is None:
-        log.error("options.strategy.trigger_strategy=%r is not a registered/enabled "
-                 "equity strategy — no options signals can be checked.", trigger_callsign)
-        return [SignalCheck(s, trigger_callsign, False, "trigger strategy unavailable")
-               for s in underlyings]
+    built = build_strategies(config)
 
     checks: list[SignalCheck] = []
-    for symbol in underlyings:
-        data = market.get(symbol)
-        if data is None or data.bars.empty:
-            checks.append(SignalCheck(symbol, trigger_callsign, False,
-                                      "no stock-side data available"))
-            continue
-        if len(data.bars) < trigger.warmup:
-            checks.append(SignalCheck(symbol, trigger_callsign, False,
-                                      f"only {len(data.bars)} bars, needs {trigger.warmup}"))
+    for callsign in _trigger_callsigns(config):
+        trigger = built.get(callsign)
+        if trigger is None:
+            log.error("options trigger %r is not a registered/enabled equity "
+                     "strategy — skipping it.", callsign)
+            checks.extend(SignalCheck(s, callsign, False, "trigger strategy unavailable")
+                          for s in underlyings)
             continue
 
-        signal = trigger.generate_signals(data.bars).iloc[-1]
-        is_long = bool(signal and signal > 0)
-        note = "synthetic stock data, not trusted" if data.is_synthetic else "live"
-        checks.append(SignalCheck(symbol, trigger_callsign, is_long,
-                                  f"{'long' if is_long else 'flat'} ({note})",
-                                  direction="call"))
+        for symbol in underlyings:
+            data = market.get(symbol)
+            if data is None or data.bars.empty:
+                checks.append(SignalCheck(symbol, callsign, False,
+                                          "no stock-side data available"))
+                continue
+            if len(data.bars) < trigger.warmup:
+                checks.append(SignalCheck(symbol, callsign, False,
+                                          f"only {len(data.bars)} bars, "
+                                          f"needs {trigger.warmup}"))
+                continue
+
+            signal = trigger.generate_signals(data.bars).iloc[-1]
+            is_long = bool(signal and signal > 0)
+            note = "synthetic stock data, not trusted" if data.is_synthetic else "live"
+            checks.append(SignalCheck(symbol, callsign, is_long,
+                                      f"{'long' if is_long else 'flat'} ({note})",
+                                      direction="call"))
     return checks
 
 
 def check_put_signals(config: Config, market: dict[str, MarketData]) -> list[SignalCheck]:
-    """Today's read of the put trigger (Donchian breakdown, mirroring the
-    call trigger's own params) for every configured options underlying.
-    Same never-guess-at-it shape as `check_signals`. Returns an empty list
-    outright if `options.strategy.puts_enabled` is false, or if the
-    configured call trigger isn't a registered strategy (there's nothing to
-    mirror the params of)."""
+    """Today's put-trigger read, for those triggers that HAVE a put mirror.
+
+    The put side is a Donchian breakdown mirroring the trigger's own
+    entry/exit windows, so it only exists for Donchian-style triggers
+    (SPARK, SURGE). ANCHOR is a band-reversion rule and FLUX a moving-average
+    cross; neither has an `entry_window`/`exit_window` to mirror, and both
+    are long-or-flat, so there is no defensible way to invert them into a
+    bearish signal. Rather than invent one, they simply contribute no put
+    checks -- deliberate, and logged once at debug.
+
+    Returns an empty list outright if `options.strategy.puts_enabled` is
+    false."""
     if not bool(config.get("options.strategy.puts_enabled", True)):
         return []
 
-    trigger_callsign = str(config.get("options.strategy.trigger_strategy", "SPARK"))
     underlyings = list(config.get("options.underlyings"))
-    trigger = build_strategies(config).get(trigger_callsign)
-    put_trigger_name = f"{trigger_callsign}-puts"
-    if trigger is None:
-        log.error("options.strategy.trigger_strategy=%r is not a registered/enabled "
-                 "equity strategy — no put signals can be checked.", trigger_callsign)
-        return [SignalCheck(s, put_trigger_name, False, "trigger strategy unavailable",
-                            direction="put")
-               for s in underlyings]
-
-    entry_window = int(trigger.params.get("entry_window", 20))
-    exit_window = int(trigger.params.get("exit_window", 10))
+    built = build_strategies(config)
 
     checks: list[SignalCheck] = []
-    for symbol in underlyings:
-        data = market.get(symbol)
-        if data is None or data.bars.empty:
-            checks.append(SignalCheck(symbol, put_trigger_name, False,
-                                      "no stock-side data available", direction="put"))
-            continue
-        if len(data.bars) < trigger.warmup:
-            checks.append(SignalCheck(symbol, put_trigger_name, False,
-                                      f"only {len(data.bars)} bars, needs {trigger.warmup}",
-                                      direction="put"))
+    for callsign in _trigger_callsigns(config):
+        trigger = built.get(callsign)
+        put_trigger_name = f"{callsign}-puts"
+        if trigger is None:
+            log.error("options trigger %r is not a registered/enabled equity "
+                     "strategy — no put signals for it.", callsign)
+            checks.extend(SignalCheck(s, put_trigger_name, False,
+                                      "trigger strategy unavailable", direction="put")
+                          for s in underlyings)
             continue
 
-        state = _donchian_breakdown(data.bars, entry_window, exit_window)
-        is_active = bool(state.iloc[-1] and state.iloc[-1] > 0)
-        note = "synthetic stock data, not trusted" if data.is_synthetic else "live"
-        checks.append(SignalCheck(symbol, put_trigger_name, is_active,
-                                  f"{'breakdown' if is_active else 'flat'} ({note})",
-                                  direction="put"))
+        if "entry_window" not in trigger.params or "exit_window" not in trigger.params:
+            log.debug("%s has no Donchian entry/exit windows to mirror — no put "
+                     "side for it.", callsign)
+            continue
+
+        entry_window = int(trigger.params["entry_window"])
+        exit_window = int(trigger.params["exit_window"])
+
+        for symbol in underlyings:
+            data = market.get(symbol)
+            if data is None or data.bars.empty:
+                checks.append(SignalCheck(symbol, put_trigger_name, False,
+                                          "no stock-side data available",
+                                          direction="put"))
+                continue
+            if len(data.bars) < trigger.warmup:
+                checks.append(SignalCheck(symbol, put_trigger_name, False,
+                                          f"only {len(data.bars)} bars, "
+                                          f"needs {trigger.warmup}", direction="put"))
+                continue
+
+            state = _donchian_breakdown(data.bars, entry_window, exit_window)
+            is_active = bool(state.iloc[-1] and state.iloc[-1] > 0)
+            note = "synthetic stock data, not trusted" if data.is_synthetic else "live"
+            checks.append(SignalCheck(symbol, put_trigger_name, is_active,
+                                      f"{'breakdown' if is_active else 'flat'} ({note})",
+                                      direction="put"))
     return checks
 
 
 def _market_gates(config: Config, market: dict[str, MarketData],
-                  underlyings: list[str]) -> dict[str, MarketGate]:
-    """Today's trending-regime + walk-forward-validation verdict for every
-    configured underlying. Returns a gate for exactly the underlyings Wong
-    actually has data for; a symbol missing from `market` simply has no
-    entry (callers treat that as blocked — see `_propose_one`).
+                  underlyings: list[str]) -> dict[tuple[str, str], MarketGate]:
+    """Today's trending-regime + walk-forward verdict for every (trigger,
+    underlying) pair, keyed by that pair.
+
+    Keyed by pair, not by symbol alone, because the regime half is a
+    property of the market but the validation half is a property of THAT
+    strategy on THAT underlying -- ANCHOR may have earned the right to
+    trade QQQ on a day SPARK has not.
 
     Deliberately re-runs Greg's classifier and Charles's grading fresh on
     each call rather than reading Charles's/Greg's own daily RiskReport/
     RegimeReport (which only cover the stock side's already-chosen live
-    roster) — this way the options desk's answer depends only on today's
-    market and SPARK's own track record on that ticker, never on whether
-    SPARK happens to be one of the 3 stock traders Charles picked today.
+    roster) -- this way the options desk's answer depends only on today's
+    market and that trigger's own track record on that ticker.
 
     Returns an empty dict outright if `options.strategy.market_gate_enabled`
-    is false, or if the configured trigger isn't a registered strategy."""
+    is false."""
     if not bool(config.get("options.strategy.market_gate_enabled", True)):
         return {}
 
-    trigger_callsign = str(config.get("options.strategy.trigger_strategy", "SPARK"))
-    trigger = build_strategies(config).get(trigger_callsign)
-    if trigger is None:
-        return {}
-
+    built = build_strategies(config)
     regime_agent = RegimeAgent(config)
     charles = RiskAgent(config)
     validator = WalkForwardValidator(config)
     engine = BacktestEngine(config)
 
-    gates: dict[str, MarketGate] = {}
-    for symbol in underlyings:
-        data = market.get(symbol)
-        if data is None or data.bars.empty:
+    gates: dict[tuple[str, str], MarketGate] = {}
+    # The regime read is per-symbol and trigger-independent, so compute it
+    # once per symbol rather than once per pair.
+    regimes: dict[str, object] = {}
+
+    for callsign in _trigger_callsigns(config):
+        trigger = built.get(callsign)
+        if trigger is None:
             continue
 
-        classification = regime_agent.classify(data.bars, symbol)
-        trending = classification.regime == "trending"
-        regime_note = (f"regime is {classification.regime}, not trending "
-                       f"({classification.detail})")
+        for symbol in underlyings:
+            data = market.get(symbol)
+            if data is None or data.bars.empty:
+                continue
 
-        # Both conditions are evaluated every run, even when the first has
-        # already failed. Returning early here hid the validation verdict
-        # for two weeks in Sept 2026: the log only ever showed "choppy
-        # market", so a shut validation gate was indistinguishable from a
-        # quiet tape. Cost is one extra backtest per underlying per day.
-        validated = False
-        validation_note = ""
-        bt = engine.run(trigger, data.bars, symbol, asset_class=data.asset_class,
-                        data_source=data.data_source)
-        if bt.blocked:
-            validation_note = (f"{trigger_callsign} has insufficient history to "
-                               f"grade ({bt.block_reason})")
-        else:
-            wf = validator.validate(trigger, data.bars, symbol, data.asset_class)
-            candidate = TraderCandidate(
-                strategy=trigger_callsign, symbol=symbol, asset_class=data.asset_class,
-                walkforward=wf, backtest_max_drawdown=bt.summary.max_drawdown,
-                annual_vol=bt.summary.annual_vol, sharpe=bt.summary.sharpe,
-            )
-            # Reuse Charles's own grading verbatim (walk-forward pass/fail, then
-            # the hard full-period drawdown cap) so this can never silently
-            # drift from what "validated" means on the stock side.
-            validated, reject_reason = charles._grade(candidate)
+            if symbol not in regimes:
+                regimes[symbol] = regime_agent.classify(data.bars, symbol)
+            classification = regimes[symbol]
+            trending = classification.regime == "trending"
+            regime_note = (f"regime is {classification.regime}, not trending "
+                           f"({classification.detail})")
+
+            # Both conditions are evaluated every run, even when the first
+            # has already failed. Returning early here hid the validation
+            # verdict for two weeks in Sept 2026: the log only ever showed
+            # "choppy market", so a shut validation gate was
+            # indistinguishable from a quiet tape.
+            validated = False
+            validation_note = ""
+            sharpe = 0.0
+            bt = engine.run(trigger, data.bars, symbol, asset_class=data.asset_class,
+                            data_source=data.data_source)
+            if bt.blocked:
+                validation_note = (f"{callsign} has insufficient history to grade "
+                                   f"({bt.block_reason})")
+            else:
+                wf = validator.validate(trigger, data.bars, symbol, data.asset_class)
+                candidate = TraderCandidate(
+                    strategy=callsign, symbol=symbol, asset_class=data.asset_class,
+                    walkforward=wf, backtest_max_drawdown=bt.summary.max_drawdown,
+                    annual_vol=bt.summary.annual_vol, sharpe=bt.summary.sharpe,
+                )
+                # Reuse Charles's own grading verbatim so this can never
+                # silently drift from what "validated" means on the stock side.
+                validated, reject_reason = charles._grade(candidate)
+                sharpe = float(bt.summary.sharpe)
+                if not validated:
+                    validation_note = f"{callsign} fails validation: {reject_reason}"
+
+            key = (callsign, symbol)
+            if trending and validated:
+                gates[key] = MarketGate(symbol, classification.regime, True,
+                                        "trending & validated", trigger=callsign,
+                                        sharpe=sharpe)
+                continue
+
+            # Report every failing condition, not just the first one.
+            blockers = []
+            if not trending:
+                blockers.append(regime_note)
             if not validated:
-                validation_note = f"{trigger_callsign} fails validation: {reject_reason}"
-
-        if trending and validated:
-            gates[symbol] = MarketGate(symbol, classification.regime, True,
-                                       "trending & validated")
-            continue
-
-        # Report every failing condition, not just the first one, so the
-        # operator sees the full set of things that must change.
-        blockers = []
-        if not trending:
-            blockers.append(regime_note)
-        if not validated:
-            blockers.append(validation_note)
-        gates[symbol] = MarketGate(symbol, classification.regime, False,
-                                   "; ".join(blockers))
+                blockers.append(validation_note)
+            gates[key] = MarketGate(symbol, classification.regime, False,
+                                    "; ".join(blockers), trigger=callsign,
+                                    sharpe=sharpe)
     return gates
 
 
@@ -374,7 +428,11 @@ def build_proposals(config: Config, market: dict[str, MarketData],
     underlyings = list(config.get("options.underlyings"))
     gates = _market_gates(config, market, underlyings)
     for c in (*call_checks, *put_checks):
-        gate = gates.get(c.underlying)
+        # A put check's trigger is "<callsign>-puts"; its gate is the one
+        # for the underlying call trigger, since validation grades the
+        # equity strategy itself, not its mirrored put rule.
+        callsign = c.trigger[:-5] if c.trigger.endswith("-puts") else c.trigger
+        gate = gates.get((callsign, c.underlying))
         if gate is not None:
             c.gate_passed = gate.passed
             c.gate_detail = gate.reason
@@ -386,12 +444,13 @@ def build_proposals(config: Config, market: dict[str, MarketData],
 
     # Interleave per underlying (call read, then put read) so the console/
     # dashboard reports both directions together for each name.
-    put_by_symbol = {c.underlying: c for c in put_checks}
+    put_by_pair = {(c.trigger, c.underlying): c for c in put_checks}
     checks: list[SignalCheck] = []
     for c in call_checks:
         checks.append(c)
-        if c.underlying in put_by_symbol:
-            checks.append(put_by_symbol[c.underlying])
+        mirrored = put_by_pair.get((f"{c.trigger}-puts", c.underlying))
+        if mirrored is not None:
+            checks.append(mirrored)
 
     contracts_per_signal = int(config.get("options.strategy.contracts_per_signal", 1))
     min_dte = int(config.get("options.strategy.min_days_to_expiration", 3))
@@ -401,8 +460,18 @@ def build_proposals(config: Config, market: dict[str, MarketData],
     # that same name — enforced once, here, ahead of both directions.
     open_underlyings = {p.underlying for p in ledger.positions.values()}
 
+    # Several triggers can fire on the same underlying on the same day, and
+    # only one position per underlying is ever opened (plus Theo's hard
+    # concurrency cap). Rank by the trigger's walk-forward Sharpe on that
+    # underlying so the best-validated view wins the slot, rather than
+    # whichever callsign happens to sort first.
+    def _rank(check: SignalCheck) -> float:
+        callsign = check.trigger[:-5] if check.trigger.endswith("-puts") else check.trigger
+        gate = gates.get((callsign, check.underlying))
+        return -(gate.sharpe if gate is not None else 0.0)
+
     proposals: list[OptionsProposal] = []
-    for check in call_checks:
+    for check in sorted(call_checks, key=_rank):
         proposal = _propose_one(config, check, market, chains, augustus,
                                 open_underlyings, min_dte, today,
                                 contracts_per_signal, "long_call")
@@ -410,7 +479,7 @@ def build_proposals(config: Config, market: dict[str, MarketData],
             proposals.append(proposal)
             open_underlyings.add(check.underlying)  # don't also open a put this run
 
-    for check in put_checks:
+    for check in sorted(put_checks, key=_rank):
         proposal = _propose_one(config, check, market, chains, augustus,
                                 open_underlyings, min_dte, today,
                                 contracts_per_signal, "long_put")

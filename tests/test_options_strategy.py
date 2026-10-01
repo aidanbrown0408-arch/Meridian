@@ -363,16 +363,16 @@ def test_gate_passes_when_trending_and_validated():
     it (3/5 folds)."""
     market = _market(_trend(seed=15, annual_drift=0.9))
     gates = _market_gates(CONFIG, market, ["SPY"])
-    assert gates["SPY"].regime == "trending"
-    assert gates["SPY"].passed, gates["SPY"].reason
+    assert gates[("SPARK", "SPY")].regime == "trending"
+    assert gates[("SPARK", "SPY")].passed, gates[("SPARK", "SPY")].reason
 
 
 def test_gate_blocks_on_choppy_regime():
     market = _market(_chop())
     gates = _market_gates(CONFIG, market, ["SPY"])
-    assert gates["SPY"].regime == "choppy"
-    assert not gates["SPY"].passed
-    assert "not trending" in gates["SPY"].reason
+    assert gates[("SPARK", "SPY")].regime == "choppy"
+    assert not gates[("SPARK", "SPY")].passed
+    assert "not trending" in gates[("SPARK", "SPY")].reason
 
 
 def test_gate_blocks_when_trending_but_unvalidated():
@@ -382,10 +382,10 @@ def test_gate_blocks_when_trending_but_unvalidated():
     distinct from the undecidable case below."""
     market = _market(_trend(seed=21, annual_drift=0.6))
     gates = _market_gates(CONFIG, market, ["SPY"])
-    assert gates["SPY"].regime == "trending"
-    assert not gates["SPY"].passed
-    assert "fails validation" in gates["SPY"].reason
-    assert "undecidable" not in gates["SPY"].reason
+    assert gates[("SPARK", "SPY")].regime == "trending"
+    assert not gates[("SPARK", "SPY")].passed
+    assert "fails validation" in gates[("SPARK", "SPY")].reason
+    assert "undecidable" not in gates[("SPARK", "SPY")].reason
 
 
 def test_gate_blocks_when_trending_but_undecidable():
@@ -394,9 +394,9 @@ def test_gate_blocks_when_trending_but_undecidable():
     and must say "undecidable", not report it as a performance failure."""
     market = _market(_trend(seed=4, annual_drift=0.3))
     gates = _market_gates(CONFIG, market, ["SPY"])
-    assert gates["SPY"].regime == "trending"
-    assert not gates["SPY"].passed
-    assert "undecidable" in gates["SPY"].reason
+    assert gates[("SPARK", "SPY")].regime == "trending"
+    assert not gates[("SPARK", "SPY")].passed
+    assert "undecidable" in gates[("SPARK", "SPY")].reason
 
 
 def test_gate_reports_every_failing_condition_not_just_the_first():
@@ -406,8 +406,8 @@ def test_gate_reports_every_failing_condition_not_just_the_first():
     behind "not trending" for two weeks."""
     market = _market(_chop())
     gates = _market_gates(CONFIG, market, ["SPY"])
-    reason = gates["SPY"].reason
-    assert not gates["SPY"].passed
+    reason = gates[("SPARK", "SPY")].reason
+    assert not gates[("SPARK", "SPY")].passed
     assert "not trending" in reason
     # The validation verdict is evaluated and reported even though the
     # regime check already failed.
@@ -458,3 +458,52 @@ def test_build_proposals_opens_once_gate_clears():
 if __name__ == "__main__":
     import pytest
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# -------------------------------------------------- multiple option triggers
+
+
+def test_every_configured_trigger_is_checked_on_every_underlying():
+    """ANCHOR, SPARK and FLUX each get their own read per underlying --
+    several strategies may hold a view on the same name on the same day,
+    and the report must show each rather than collapsing them."""
+    market = _market(_trend(seed=15, annual_drift=0.9))
+    checks = check_signals(CONFIG, market)
+    triggers = {c.trigger for c in checks if c.underlying == "SPY"}
+    assert {"SPARK", "ANCHOR", "FLUX"} <= triggers
+
+
+def test_gates_are_per_trigger_not_just_per_symbol():
+    """Validation is a property of a strategy on an underlying, not of the
+    market, so one trigger can be gated on a name another has cleared."""
+    market = _market(_trend(seed=15, annual_drift=0.9))
+    gates = _market_gates(CONFIG, market, ["SPY"])
+    assert ("SPARK", "SPY") in gates
+    assert ("ANCHOR", "SPY") in gates
+    for (callsign, _symbol), gate in gates.items():
+        assert gate.trigger == callsign
+
+
+def test_put_side_only_exists_for_donchian_triggers():
+    """ANCHOR (band reversion) and FLUX (MA cross) are long-or-flat with no
+    entry/exit windows to mirror, so they contribute no put checks rather
+    than having a bearish rule invented for them."""
+    market = _market(_trend(seed=15, annual_drift=0.9))
+    puts = check_put_signals(CONFIG, market)
+    put_triggers = {c.trigger for c in puts}
+    assert "SPARK-puts" in put_triggers
+    assert "ANCHOR-puts" not in put_triggers
+    assert "FLUX-puts" not in put_triggers
+
+
+def test_one_underlying_yields_at_most_one_proposal_across_triggers():
+    """Several triggers firing on the same name must still open only one
+    position on it -- no stacking two calls on one underlying."""
+    market = _market(_trend(seed=15, annual_drift=0.9))
+    spot = float(market["SPY"].bars["close"].iloc[-1])
+    expiration = (date.today() + timedelta(days=30)).isoformat()
+    chains = {"SPY": _chain("SPY", spot, expiration)}
+    ledger = OptionsLedger(starting_capital=1000.0, cash=1000.0)
+    proposals, _checks = build_proposals(CONFIG, market, chains, ledger,
+                                         OptionsDataAgent(CONFIG))
+    assert len({p.underlying for p in proposals}) == len(proposals)

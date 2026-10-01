@@ -97,8 +97,13 @@ options:
 
   # Strategies whose SPY/QQQ signal goes to the options desk instead of
   # shares. Keep in sync with strategies/options_strategy.py (SPARK today).
+  # MUST stay in sync with options.strategy.trigger_strategies below: a
+  # strategy routed out of shares but not registered as a trigger would
+  # have its SPY/QQQ view silently dropped rather than expressed.
   routed_strategies:
     - SPARK
+    - ANCHOR
+    - FLUX
   
   ledger_path: reports/options_ledger.json
 
@@ -142,7 +147,21 @@ options:
   # the stock side. At most one position (either direction) open per
   # underlying at a time -- see strategies/options_strategy.py.
   strategy:
-    trigger_strategy: SPARK
+    # The equity strategies allowed to trigger an options proposal. Each
+    # must also appear in options.routed_strategies above.
+    #
+    # Limited to strategies whose holding period fits inside the <=60-day
+    # expiration window (options.data.max_days_to_expiration): measured
+    # median holds are ANCHOR ~10 bars, SPARK ~20, FLUX ~28. ORBIT (median
+    # 39, mean 70, max 200) and SURGE (median 53, mean 59, max 171) are
+    # deliberately excluded -- a contract capped at 60 days would
+    # systematically expire before their view resolved.
+    #
+    # The singular `trigger_strategy` key is still read as a fallback.
+    trigger_strategies:
+      - SPARK
+      - ANCHOR
+      - FLUX
     contracts_per_signal: 1
     # Skip an expiration inside this many days even if Augustus kept it --
     # avoids opening something that's about to expire before the next
