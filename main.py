@@ -431,7 +431,8 @@ def _options_leg(config, market: dict, blocked: dict | None = None,
     # problem must never fail the trading run, so it only logs.
     try:
         summary = ReportingAgent.build_options_summary(
-            ledger, prices, chains=chains, checks=checks, halt_floor=joseph.halt_floor)
+            ledger, prices, chains=chains, checks=checks, halt_floor=joseph.halt_floor,
+            market=market, config=config)
         path = ReportingAgent(config).refresh_options(summary)
         print(f"    Dashboard updated: {path}")
     except Exception as exc:

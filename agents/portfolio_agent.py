@@ -40,6 +40,10 @@ class Position:
     shares: float
     entry_price: float
     entry_date: str  # ISO date of the first fill that opened this position
+    # Which live traders' signals this position is held for (the netted
+    # contributors at the last fill). Empty on positions opened before
+    # attribution was recorded -- the dashboard then infers it and says so.
+    traders: list = field(default_factory=list)
 
     def days_held(self, as_of: datetime | None = None) -> int:
         as_of = as_of or datetime.now(timezone.utc)
@@ -62,6 +66,12 @@ class Trade:
     price: float
     cost: float         # dollars, commission + slippage
     reason: str
+    # Traders behind this fill: on a buy, the contributors to the new target;
+    # on a sell, the traders the position was held for before it was cut.
+    traders: list = field(default_factory=list)
+    # Date of the price bar the fill was priced off (the newest bar Wong
+    # returned). Can differ from `date` (the run date) when the feed lags.
+    bar_date: str = ""
 
 
 @dataclass
@@ -178,9 +188,11 @@ class PaperBroker:
 
         for symbol, price in prices.items():
             asset_class = market[symbol].asset_class
-            target_weight = netted_positions.get(
-                symbol, NettedPosition(symbol, 0.0, False, [])).target_weight
-            self._rebalance_one(ledger, symbol, asset_class, price, target_weight, equity, today)
+            netted = netted_positions.get(symbol, NettedPosition(symbol, 0.0, False, []))
+            bar_date = market[symbol].bars.index[-1].date().isoformat()
+            self._rebalance_one(ledger, symbol, asset_class, price, netted.target_weight,
+                                equity, today, traders=list(netted.contributors),
+                                bar_date=bar_date)
 
         self._record_shadow(ledger, market, regime_adjustments or [], today)
 
@@ -196,7 +208,9 @@ class PaperBroker:
         return ledger
 
     def _rebalance_one(self, ledger: PaperLedger, symbol: str, asset_class: str, price: float,
-                       target_weight: float, equity: float, today: datetime) -> None:
+                       target_weight: float, equity: float, today: datetime,
+                       traders: list | None = None, bar_date: str = "") -> None:
+        traders = list(traders or [])
         cost_model = CostModel.from_config(self.config, asset_class)
         current = ledger.positions.get(symbol)
         current_shares = current.shares if current else 0.0
@@ -223,15 +237,18 @@ class PaperBroker:
             new_shares = current_shares + delta_shares
             if current is None or current_shares == 0:
                 entry_price, entry_date = price, today.date().isoformat()
+                held_for = traders
             else:
                 # Weighted-average entry price across the combined position.
                 entry_price = ((current.entry_price * current_shares + price * delta_shares)
                                / new_shares)
                 entry_date = current.entry_date
+                held_for = traders or list(current.traders)
             ledger.positions[symbol] = Position(symbol, asset_class, new_shares,
-                                                entry_price, entry_date)
+                                                entry_price, entry_date, held_for)
             ledger.trades.append(Trade(local_date(self.config, today), symbol, "buy",
-                                       delta_shares, price, cost, "rebalance to target"))
+                                       delta_shares, price, cost, "rebalance to target",
+                                       traders, bar_date))
         else:
             sell_shares = min(abs(delta_shares), current_shares)
             proceeds = sell_shares * price - cost
@@ -241,9 +258,11 @@ class PaperBroker:
                 ledger.positions.pop(symbol, None)
             else:
                 ledger.positions[symbol] = Position(symbol, asset_class, remaining,
-                                                    current.entry_price, current.entry_date)
+                                                    current.entry_price, current.entry_date,
+                                                    traders or list(current.traders))
             ledger.trades.append(Trade(local_date(self.config, today), symbol, "sell",
-                                       sell_shares, price, cost, "rebalance to target"))
+                                       sell_shares, price, cost, "rebalance to target",
+                                       list(current.traders), bar_date))
 
     def _record_shadow(self, ledger: PaperLedger, market: dict[str, MarketData],
                        regime_adjustments: list, today: datetime) -> None:
@@ -287,8 +306,11 @@ class PaperBroker:
             cost = pos.shares * price * cost_model.one_way_bps * BPS
             proceeds = pos.shares * price - cost
             ledger.cash += proceeds
+            bar = (market[symbol].bars.index[-1].date().isoformat()
+                   if symbol in prices else "")
             ledger.trades.append(Trade(local_date(self.config, today), symbol, "sell",
-                                       pos.shares, price, cost, "killswitch flatten"))
+                                       pos.shares, price, cost, "killswitch flatten",
+                                       list(pos.traders), bar))
             del ledger.positions[symbol]
 
         ledger.halted = True

@@ -23,6 +23,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from agents.compliance_agent import ComplianceReport
 from agents.dashboard_view import make_view_global
+from agents.trade_charts import build_options_charts, build_stock_charts
 from agents.data_agent import MarketData
 from agents.regime_agent import RegimeReport
 from collections import Counter
@@ -38,6 +39,22 @@ from utils.svg_charts import bar_chart, line_chart
 log = get_logger("reporting", agent="George")
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
+# TradingView Lightweight Charts (Apache-2.0), vendored and inlined so the
+# dashboard stays one self-contained, offline HTML file.
+CHART_LIB = (Path(__file__).resolve().parent.parent / "static" / "vendor"
+             / "lightweight-charts-4.2.3.standalone.production.js")
+_chart_lib_cache: list[str] = []
+
+
+def chart_lib_js() -> str:
+    if not _chart_lib_cache:
+        try:
+            _chart_lib_cache.append(CHART_LIB.read_text(encoding="utf-8"))
+        except OSError as exc:
+            log.warning("Chart library missing at %s (%s) -- trade charts won't draw.",
+                        CHART_LIB, exc)
+            _chart_lib_cache.append("")
+    return _chart_lib_cache[0]
 # Written by the options leg of `paper`, read by every dashboard render.
 OPTIONS_STATUS_FILE = "options_status.json"
 # The last stock-side context, so the options leg of `paper` can re-render latest.html
@@ -67,6 +84,7 @@ class ReportingAgent:
             autoescape=select_autoescape(["html"]),
         )
         self.env.globals["view"] = make_view_global(config)
+        self.env.globals["chart_lib_js"] = chart_lib_js
 
     # ------------------------------------------------------------------ run
 
@@ -110,8 +128,8 @@ class ReportingAgent:
 
     @staticmethod
     def build_options_summary(ledger, prices: dict, chains: dict | None = None,
-                              checks: list | None = None, halt_floor: float | None = None
-                              ) -> dict:
+                              checks: list | None = None, halt_floor: float | None = None,
+                              market: dict | None = None, config=None) -> dict:
         """Snapshot of the options bucket for the dashboard. Read-only: takes
         Joseph's ledger as given, never writes it. JSON-safe so it can be
         cached between runs."""
@@ -172,6 +190,8 @@ class ReportingAgent:
                         "calls": len(ch.calls), "puts": len(ch.puts),
                         "source": ch.data_source, "synthetic": ch.is_synthetic}
                        for sym, ch in (chains or {}).items()],
+            "charts": _safe_charts(lambda: build_options_charts(config, market, ledger, prices))
+                      if market else {"open": [], "closed": []},
             "equity_chart": line_chart({"Options bucket equity": history},
                                        title="Options bucket equity ($)")
                             if len(history) > 1 else "",
@@ -302,6 +322,10 @@ class ReportingAgent:
         } for symbol, s in benchmarks.items()]
 
         ledger_summary = self._ledger_summary(ledger, market)
+        trade_charts = _safe_charts(lambda: build_stock_charts(
+            self.config, market, ledger,
+            contributors=self._stock_contributors(regime_report),
+            regimes={s: c.regime for s, c in regime_report.regimes.items()}))
         recommendation_rows = [{
             "trader": r.trader, "trigger": r.trigger, "action": r.action, "detail": r.detail,
         } for r in (recommendations or [])]
@@ -324,6 +348,7 @@ class ReportingAgent:
             "drawdown_chart": self._drawdown_chart(by_key, risk_report),
             "trader_bar_chart": self._trader_bar_chart(risk_report),
             "ledger": ledger_summary,
+            "trade_charts": trade_charts,
             "recommendation_rows": recommendation_rows,
             # Extra inputs for the tabbed dashboard (agents/dashboard_view.py).
             "capital_weights": {k: round(float(w), 4)
@@ -331,6 +356,23 @@ class ReportingAgent:
             "results_count": len(results),
             "strategy_styles": self._strategy_styles(),
         }
+
+    def _stock_contributors(self, regime_report: RegimeReport) -> dict:
+        """symbol -> traders the *share* position is held for today: the
+        netted contributors minus any strategy whose view on an options
+        underlying trades on the options desk instead (main.py's routing)."""
+        routed: set = set()
+        underlyings: set = set()
+        if self.config.get("options.enabled", False):
+            routed = set(self.config.get("options.routed_strategies", ["SPARK"]) or [])
+            underlyings = set(self.config.get("options.underlyings", []) or [])
+        out = {}
+        for symbol, pos in regime_report.netted_positions.items():
+            names = list(pos.contributors)
+            if symbol in underlyings:
+                names = [n for n in names if n not in routed]
+            out[symbol] = names
+        return out
 
     def _strategy_styles(self) -> dict:
         try:
@@ -621,6 +663,15 @@ class ReportingAgent:
         if ledger is not None:
             payload.books.append(self.stock_book(market, ledger, len(new_fills or [])))
         return payload
+
+
+def _safe_charts(build) -> dict:
+    """A chart problem must never cost the day's report."""
+    try:
+        return build()
+    except Exception as exc:
+        log.warning("Trade charts failed (%s) -- dashboard rendered without them.", exc)
+        return {"open": [], "closed": [], "error": str(exc)}
 
 
 def _json_default(obj):

@@ -359,7 +359,11 @@ def build_view(c: dict, config=None) -> dict:
             "level": a["level"] if a else "off",
         })
 
+    active = _active_trades(get("trade_charts", {}) or {},
+                            (options or {}).get("charts", {}) or {}, regimes)
+
     return {
+        "active": active,
         "hdr_date": datetime.now().strftime("%b %d, %Y · %H:%M").replace(" 0", " "),
         "stock": stock, "opt": opt, "stats": stats, "alerts": alerts, "caps": caps,
         "signals": signals,
@@ -372,6 +376,46 @@ def build_view(c: dict, config=None) -> dict:
         "counts": {"alerts": len(alerts),
                    "positions": (len(ledger["positions"]) if ledger else 0) + len(options_open)},
     }
+
+
+def _active_trades(stock: dict, options: dict, regimes: list) -> dict:
+    """Merge both desks' chart cards and the summary strip for the ACTIVE
+    TRADES tab. Cards themselves come from agents/trade_charts.py."""
+    regime_by_symbol = {r["symbol"]: r["regime"] for r in regimes}
+    open_cards = list(stock.get("open", [])) + list(options.get("open", []))
+    closed = sorted(list(stock.get("closed", [])) + list(options.get("closed", [])),
+                    key=lambda c: c.get("sort_date", ""), reverse=True)
+    for c in open_cards + closed:
+        if not c.get("regime"):
+            c["regime"] = regime_by_symbol.get(c.get("symbol"), "")
+
+    total = sum((c.get("headline") or {}).get("raw", 0.0) or 0.0 for c in open_cards)
+    nearest = None
+    for c in open_cards:
+        for t in c.get("traders", []):
+            d = t.get("distance_pct")
+            if d is None or t.get("signal_now") != "active":
+                continue
+            if nearest is None or abs(d) < abs(nearest[0]):
+                nearest = (d, c["title"], t["callsign"], t.get("status", ""))
+    stale = sorted({c["data"]["through"] for c in open_cards if c.get("data", {}).get("stale")})
+    throughs = sorted({c["data"]["through"] for c in open_cards if c.get("data")})
+    summary = [
+        {"label": "Open positions", "value": str(len(open_cards)),
+         "sub": ", ".join(c["title"] for c in open_cards) or "flat", "cls": ""},
+        {"label": "Unrealized P&L", "value": _signed(total, 2) if open_cards else "—",
+         "sub": "both desks, vs. average entry", "cls": _cls(total) if open_cards else ""},
+        {"label": "Closest to an exit",
+         "value": f"{nearest[1]} · {nearest[2]}" if nearest else "—",
+         "sub": nearest[3] if nearest else "no measurable exit line", "cls": "gld"},
+        {"label": "Prices through",
+         "value": throughs[0] if len(throughs) == 1 else (" / ".join(throughs) if throughs else "—"),
+         "sub": ("behind the latest session — see card notes" if stale else "latest completed session"),
+         "cls": "dn" if stale else ""},
+    ]
+    errors = [e for e in (stock.get("error"), options.get("error")) if e]
+    return {"open": open_cards, "closed": closed, "summary": summary, "errors": errors,
+            "count": len(open_cards)}
 
 
 def _card(name, role, message, status_text, level) -> dict:

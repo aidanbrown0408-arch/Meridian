@@ -214,6 +214,18 @@ revisited once Cornelius's paper broker gives us real day-over-day state.
 line chart and a signed bar chart) so the dashboard stays a single dependency-free HTML
 file. Colors are the spec's navy/gold/parchment/gain/loss palette, not a generic theme.
 
+**One exception: the ACTIVE TRADES tab.** Interactive candlestick charts need a real
+charting engine, so TradingView Lightweight Charts 4.2.3 (Apache-2.0) is vendored in
+`static/vendor/` and *inlined* into the HTML — the dashboard is still one offline file.
+`agents/trade_charts.py` builds one card per open (and recently closed) position: candles,
+the exact indicator series the trader behind it decides on, its entry/exit signals, the
+ledger's actual fills, and P&L replayed from those fills. `tests/test_trade_charts.py`
+rebuilds every strategy's signal from the charted series and requires it to match
+`generate_signals()` bar for bar, and reconciles card P&L to the ledger to the cent.
+Cornelius now records `traders` and `bar_date` on every fill, and Joseph records one
+quoted mark per day on each open contract, so attribution and option P&L history are
+on record rather than inferred.
+
 **Slack posting never raises.** `utils/slack.py` POSTs via stdlib `urllib`, returns
 `False` on any failure or missing webhook, and always logs the message it would have
 sent — a Slack outage must never take down the research pipeline.

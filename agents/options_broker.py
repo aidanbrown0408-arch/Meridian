@@ -69,6 +69,10 @@ class OptionsPosition:
     entry_premium_per_contract: float
     entry_date: str                    # ISO datetime of the opening fill
     reason: str = ""
+    # One quoted mark per run date, [{"date": "YYYY-MM-DD", "premium": $/contract}],
+    # so the dashboard can chart the position's P&L over its life. Only real
+    # quotes are recorded -- an unquoted day is a gap, never a mark at cost.
+    marks: list = field(default_factory=list)
 
     @property
     def key(self) -> str:
@@ -280,6 +284,8 @@ class OptionsBroker:
         for proposal in proposals:
             self._consider(ledger, proposal, prices, today)
 
+        self._record_marks(ledger, prices, today)
+
         equity_after = ledger.mark_to_market(prices)
         ledger.equity_history.append({"date": local_date(self.config, today),
                                       "equity": equity_after})
@@ -350,6 +356,18 @@ class OptionsBroker:
         log.info("OPEN  %s x%d @ $%.2f/contract  ($%.2f premium, $%.2f commission)",
                  position.label, position.contracts, proposal.premium_per_contract,
                  premium, cost)
+
+    def _record_marks(self, ledger: OptionsLedger, prices: dict, today: datetime) -> None:
+        """Append today's quoted premium to each open position's mark history
+        (one row per date; a second run on the same date replaces the first)."""
+        date_str = local_date(self.config, today)
+        for key, position in ledger.positions.items():
+            premium = prices.get(key)
+            if premium is None:
+                continue
+            marks = [m for m in position.marks if m.get("date") != date_str]
+            marks.append({"date": date_str, "premium": round(float(premium), 4)})
+            position.marks = marks[-400:]
 
     # ------------------------------------------------------------------ closing
 

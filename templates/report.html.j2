@@ -162,6 +162,63 @@ tr.click:hover td{background:var(--navy3)}
 
 footer{text-align:center;font-size:11px;color:var(--dim);padding:28px 0 36px}
 
+/* ---------- active trades ---------- */
+.at-sum{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:6px}
+.at-sum .stat{padding:11px 14px}
+.tc{margin-top:14px;padding:16px 18px 14px}
+.tc-hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+.tc-title{font-family:'Playfair Display',Georgia,serif;font-size:22px;line-height:1.15}
+.tc-sub{font-size:11px;color:var(--dim);margin-top:3px;letter-spacing:.3px}
+.tc-chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;
+      padding:3px 9px;border-radius:10px;background:rgba(0,0,0,.22);color:var(--parch)}
+.chip i{width:9px;height:9px;border-radius:2px;display:inline-block}
+.tc-pnl{text-align:right}
+.tc-pnl .l{font-size:10px;letter-spacing:1.6px;text-transform:uppercase;color:var(--muted)}
+.tc-pnl .v{font-family:'Playfair Display',Georgia,serif;font-size:28px;font-variant-numeric:tabular-nums;margin-top:2px}
+.tc-pnl .p{font-size:12px;font-variant-numeric:tabular-nums}
+.tc-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:2px 14px;margin:12px 0 10px;
+          padding:9px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.tc-stats dt{font-size:10px;color:var(--muted);letter-spacing:.4px}
+.tc-stats dd{font-size:13px;font-variant-numeric:tabular-nums;margin-top:1px}
+.tc-legend{display:flex;flex-wrap:wrap;gap:6px 6px;margin:2px 0 6px;font-size:11px}
+.lg{appearance:none;border:1px solid var(--line);background:none;color:var(--parch);border-radius:6px;
+    padding:4px 8px;display:inline-flex;align-items:center;gap:7px;cursor:pointer;font:inherit;font-size:11px;min-height:28px}
+.lg[aria-pressed="false"]{opacity:.42}
+.lg svg{flex:none}
+.lg.static{cursor:default;border-color:transparent}
+.tc-ohlc{font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums;min-height:16px;margin:2px 0 4px;
+         white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tc-ohlc b{color:var(--parch);font-weight:normal}
+.pane{position:relative;width:100%}
+.pane + .pane{border-top:1px solid var(--line)}
+.pane-l{position:absolute;left:8px;top:4px;z-index:3;font-size:10px;letter-spacing:1px;text-transform:uppercase;
+        color:var(--muted);pointer-events:none;background:rgba(20,37,68,.75);padding:1px 5px;border-radius:3px}
+.tc-rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:12px}
+.rule{background:rgba(0,0,0,.18);border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.55;border-left:3px solid var(--gold)}
+.rule .h{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px}
+.rule .h b{font-weight:normal;font-family:'Playfair Display',Georgia,serif;font-size:14px}
+.rule .k{color:var(--muted)}
+.rule .now{margin-top:4px;color:var(--parch)}
+.tc-notes{margin-top:10px;display:flex;flex-direction:column;gap:5px}
+.tc-notes div{font-size:11.5px;color:var(--muted);line-height:1.5;padding-left:12px;position:relative}
+.tc-notes div::before{content:"";position:absolute;left:0;top:7px;width:5px;height:5px;border-radius:50%;background:var(--gold)}
+.tc-notes div.bad{color:var(--red)} .tc-notes div.bad::before{background:var(--red)}
+.tc-foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;font-size:10.5px;color:var(--dim);margin-top:10px}
+.tc-foot .stale{color:var(--red)}
+details.fills{margin-top:8px;font-size:12px}
+details.fills summary,details.closed summary{cursor:pointer;color:var(--gold);font-size:11px;letter-spacing:.6px;min-height:28px;display:flex;align-items:center}
+details.closed{margin-top:10px}
+details.closed > summary{font-size:12px;padding:10px 14px;background:var(--navy2);border:1px solid var(--line);border-radius:10px;
+                         display:flex;justify-content:space-between;gap:12px;color:var(--parch)}
+details.closed > summary .r{font-variant-numeric:tabular-nums}
+details.closed[open] > summary{border-radius:10px 10px 0 0}
+details.closed > .tc{margin-top:0;border-radius:0 0 10px 10px;border-top:0}
+.credit{font-size:10.5px;color:var(--dim);margin-top:18px}
+.credit a{color:var(--muted)}
+@media (max-width:900px){.at-sum{grid-template-columns:1fr 1fr}}
+@media (max-width:640px){.at-sum{grid-template-columns:1fr}.tc{padding:14px 12px}.tc-pnl{text-align:left}}
+
 @media (max-width:900px){
   .row-top{grid-template-columns:1fr 1fr}
   .row-top .stats{grid-column:1/-1;grid-template-rows:none;grid-template-columns:repeat(3,1fr)}
@@ -200,6 +257,7 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:28px 0 36px}
   </div>
   <nav class="tabs" role="tablist">
     <button class="tab" role="tab" data-tab="overview">OVERVIEW{% if v.alerts %}<span class="pip" title="{{ v.alerts|length }} item(s) need a look"></span>{% endif %}</button>
+    <button class="tab" role="tab" data-tab="active">ACTIVE TRADES{% if v.active.count %} ({{ v.active.count }}){% endif %}</button>
     <button class="tab" role="tab" data-tab="strategies">STRATEGIES</button>
     <button class="tab" role="tab" data-tab="trades">TRADES</button>
     <button class="tab" role="tab" data-tab="agents">AGENTS</button>
@@ -282,6 +340,25 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:28px 0 36px}
       {% endif %}
     </div>
   </div>
+</section>
+
+<!-- ======================= ACTIVE TRADES ======================= -->
+<section id="p-active" class="page" role="tabpanel">
+  <div class="shdr">Active trades <span class="aside">daily bars · fills from the ledgers · each trader's own indicator</span></div>
+  {% if v.active.errors %}<div class="alert halt" style="margin-bottom:10px"><div class="t">Some trade charts failed to build</div><div class="b">{{ v.active.errors|join('; ') }}</div></div>{% endif %}
+  <div class="at-sum">
+    {% for s in v.active.summary %}
+    <div class="card stat"><div class="eyebrow">{{ s.label }}</div><div class="v {{ s.cls }}">{{ s.value }}</div><div class="s" title="{{ s.sub }}">{{ s.sub }}</div></div>
+    {% endfor %}
+  </div>
+  <div id="at-open"></div>
+  {% if not v.active.open %}<div class="card" style="margin-top:14px"><p class="empty">No open positions on either desk. Charts appear here as soon as Cornelius or Joseph opens one.</p></div>{% endif %}
+  {% if v.active.closed %}
+  <div class="shdr">Closed trades <span class="aside">most recent first · realized P&amp;L after costs</span></div>
+  <div id="at-closed"></div>
+  {% endif %}
+  <p class="credit">How to read a chart: ▲ / ▼ arrows are actual ledger fills; small dots are the strategy's own entry (below the bar) and exit (above) signals at that day's close. Lines are the exact series the trader decides on. Hover for values; drag or scroll to pan and zoom; click a legend item to hide it.<br>
+  Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a> — Copyright © 2025 TradingView, Inc.</p>
 </section>
 
 <!-- ======================= STRATEGIES ======================= -->
@@ -678,6 +755,246 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:28px 0 36px}
   modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
   document.getElementById('m-close').addEventListener('click', closeModal);
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
+})();
+</script>
+<script>{{ chart_lib_js()|safe }}</script>
+<script>
+(function () {
+  var A = {{ v.active | tojson }};
+  if (!window.LightweightCharts) {
+    var host = document.getElementById('at-open');
+    if (host && A.open.length) host.innerHTML = '<p class="empty">Chart library failed to load — the tables on the TRADES tab still have every number.</p>';
+    return;
+  }
+  var LC = window.LightweightCharts;
+  var C = {bg:'#142544', text:'#A8A190', grid:'rgba(212,175,106,.07)', line:'rgba(212,175,106,.18)',
+           up:'#7FBF7F', dn:'#C97A7A', parch:'#E8E3D3', gold:'#D4AF6A'};
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
+  function load(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
+  function store(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} }
+  function fmt(x, d) { return x == null ? '—' : Number(x).toLocaleString('en-US', {minimumFractionDigits: d == null ? 2 : d, maximumFractionDigits: d == null ? 2 : d}); }
+  function swatch(color, dash) {
+    return '<svg width="22" height="8" aria-hidden="true"><line x1="1" y1="4" x2="21" y2="4" stroke="' + color + '" stroke-width="2"' + (dash ? ' stroke-dasharray="4 3"' : '') + '/></svg>';
+  }
+
+  function cardHtml(c) {
+    var chips = '';
+    if (c.regime) chips += '<span class="chip">regime: ' + esc(c.regime) + '</span>';
+    c.traders.forEach(function (t) {
+      chips += '<span class="chip"><i style="background:' + t.color + '"></i>' + esc(t.callsign) +
+        (t.attribution === 'inferred' ? ' · inferred' : '') + '</span>';
+    });
+    if (c.data && c.data.synthetic) chips += '<span class="chip" style="color:var(--red)">synthetic data</span>';
+    var stats = c.stats.map(function (s) { return '<div><dt>' + esc(s.label) + '</dt><dd>' + esc(s.value) + '</dd></div>'; }).join('');
+    var legend = '';
+    c.overlays.forEach(function (o, i) {
+      legend += '<button class="lg" type="button" aria-pressed="true" data-ov="' + i + '">' + swatch(o.color, o.dash) + esc(o.label) + '</button>';
+    });
+    c.price_lines.forEach(function (p) { legend += '<span class="lg static">' + swatch(p.color, p.dash) + esc(p.label) + ' ' + fmt(p.price) + '</span>'; });
+    if (c.markers.some(function (m) { return m.shape === 'circle'; }))
+      legend += '<span class="lg static">● signal: entry below the bar, exit above</span>';
+    if (c.markers.some(function (m) { return m.shape !== 'circle'; }))
+      legend += '<span class="lg static"><span class="up">▲</span> buy / <span class="dn">▼</span> sell fill</span>';
+    var rules = '';
+    if (c.status === 'open') {
+      c.traders.forEach(function (t) {
+        rules += '<div class="rule" style="border-left-color:' + t.color + '"><div class="h"><b>' + esc(t.callsign) + '</b><span class="bdg ' +
+          (t.signal_now === 'active' ? 'live' : 'flat') + '">' + (t.signal_now === 'active' ? 'signal active' : 'signal flat') + '</span></div>' +
+          (t.style ? '<div class="k">' + esc(t.style) + '</div>' : '') +
+          '<div><span class="k">Entry:</span> ' + esc(t.entry) + '</div><div><span class="k">Exit:</span> ' + esc(t.exit) + '</div>' +
+          (t.status ? '<div class="now">' + esc(t.status) + '</div>' : '') + '</div>';
+      });
+    }
+    var notes = c.notes.map(function (n) { return '<div class="' + (/SYNTHETIC|isn't in this run|unknown, not zero/.test(n) ? 'bad' : '') + '">' + esc(n) + '</div>'; }).join('');
+    var fills = c.markers.filter(function (m) { return m.shape !== 'circle'; });
+    var ftable = fills.length ? '<details class="fills"><summary>Fills table (' + fills.length + ')</summary><table><tr><th>Bar</th><th>Fill</th></tr>' +
+      fills.map(function (m) { return '<tr><td>' + esc(m.time) + '</td><td>' + esc(m.text) + '</td></tr>'; }).join('') + '</table></details>' : '';
+    var d = c.data || {};
+    var h = c.headline || {};
+    return '<div class="card tc" id="' + c.id + '">' +
+      '<div class="tc-hdr"><div><div class="tc-title">' + esc(c.title) + '</div><div class="tc-sub">' + esc(c.subtitle) + '</div><div class="tc-chips">' + chips + '</div></div>' +
+      '<div class="tc-pnl"><div class="l">' + esc(h.label) + '</div><div class="v ' + (h.cls || '') + '">' + esc(h.value) + '</div><div class="p ' + (h.cls || '') + '">' + esc(h.pct) + '</div></div></div>' +
+      '<dl class="tc-stats">' + stats + '</dl>' +
+      '<div class="tc-legend">' + legend + '</div>' +
+      '<div class="tc-ohlc" aria-live="off"></div>' +
+      '<div class="panes"></div>' +
+      (rules ? '<div class="tc-rules">' + rules + '</div>' : '') +
+      (notes ? '<div class="tc-notes">' + notes + '</div>' : '') + ftable +
+      '<div class="tc-foot"><span class="' + (d.stale ? 'stale' : '') + '">Prices: ' + esc(d.source) + ', through ' + esc(d.through) + (d.stale ? ' (expected ' + esc(d.expected) + ')' : '') + '</span><span>' + esc(c.pnl_label) + ' in the bottom pane</span></div>' +
+      '</div>';
+  }
+
+  function mkChart(el, height, opts) {
+    var base = {
+      height: height, autoSize: true,
+      layout: {background: {type: 'solid', color: C.bg}, textColor: C.text, fontFamily: 'Georgia, serif', fontSize: 11},
+      grid: {vertLines: {color: C.grid}, horzLines: {color: C.grid}},
+      rightPriceScale: {borderColor: C.line, minimumWidth: 74},
+      timeScale: {borderColor: C.line, rightOffset: 3, minBarSpacing: 2},
+      crosshair: {mode: 0, vertLine: {color: 'rgba(232,227,211,.35)', labelBackgroundColor: '#1A3055'},
+                  horzLine: {color: 'rgba(232,227,211,.35)', labelBackgroundColor: '#1A3055'}},
+      handleScale: {axisPressedMouseMove: {time: true, price: false}},
+      localization: {locale: 'en-US', dateFormat: 'yyyy-MM-dd'}
+    };
+    if (opts && opts.layout) base.layout = Object.assign({}, base.layout, opts.layout);
+    var ch = LC.createChart(el, base);
+    el.style.height = height + 'px';
+    return ch;
+  }
+
+  // Pad a series with whitespace on every candle date so all panes share
+  // one logical index and pan/zoom together exactly.
+  function pad(points, dates) {
+    var have = {}; points.forEach(function (p) { have[p.time] = p; });
+    var lo = points.length ? points[0].time : null, hi = points.length ? points[points.length - 1].time : null;
+    var out = [];
+    dates.forEach(function (d) { out.push(have[d] ? have[d] : {time: d}); });
+    // keep points that fall on dates not in the candle set (e.g. option marks on a holiday-less run)
+    points.forEach(function (p) { if (dates.indexOf(p.time) < 0) out.push(p); });
+    out.sort(function (a, b) { return a.time < b.time ? -1 : a.time > b.time ? 1 : 0; });
+    return out;
+  }
+
+  function draw(c) {
+    var root = document.getElementById(c.id);
+    if (!root || root.dataset.drawn) return;
+    root.dataset.drawn = '1';
+    var panesEl = root.querySelector('.panes');
+    var dates = c.candles.map(function (b) { return b.time; });
+    var charts = [], prim = [];
+
+    function pane(label, h) {
+      var p = document.createElement('div'); p.className = 'pane';
+      if (label) { var l = document.createElement('div'); l.className = 'pane-l'; l.textContent = label; p.appendChild(l); }
+      panesEl.appendChild(p);
+      // TradingView's attribution mark on the price pane only.
+      return mkChart(p, h, charts.length ? {layout: {attributionLogo: false}} : null);
+    }
+
+    var narrow = window.innerWidth < 640;
+    var price = pane(c.book === 'options' ? c.symbol + ' (underlying)' : '', narrow ? 260 : 330);
+    var candles = price.addCandlestickSeries({upColor: C.up, downColor: C.dn, wickUpColor: C.up, wickDownColor: C.dn, borderVisible: false,
+                                              priceFormat: {type: 'price', precision: 2, minMove: 0.01}});
+    candles.setData(c.candles);
+    var ovSeries = c.overlays.map(function (o) {
+      var s = price.addLineSeries({color: o.color, lineWidth: 2, lineStyle: o.dash ? 2 : 0, lineType: o.step ? 1 : 0,
+                                   priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, title: ''});
+      s.setData(pad(o.points, dates));
+      return s;
+    });
+    c.price_lines.forEach(function (p) {
+      candles.createPriceLine({price: p.price, color: p.color, lineWidth: 1, lineStyle: p.dash ? 2 : 0, axisLabelVisible: true, title: p.label});
+    });
+    var inRange = function (m) { return m.time >= dates[0] && m.time <= dates[dates.length - 1]; };
+    candles.setMarkers(c.markers.filter(inRange).map(function (m) {
+      return {time: m.time, position: m.position, shape: m.shape, color: m.color, size: m.size || 1,
+              text: m.shape === 'circle' ? '' : m.text};
+    }));
+    charts.push(price); prim.push(candles);
+
+    c.panes.forEach(function (pn) {
+      var ch = pane(pn.label, 110);
+      if (pn.min != null) ch.applyOptions({rightPriceScale: {scaleMargins: {top: 0.08, bottom: 0.08}}});
+      var s = ch.addLineSeries({color: pn.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+        autoscaleInfoProvider: pn.min != null ? function () { return {priceRange: {minValue: pn.min, maxValue: pn.max}}; } : undefined});
+      s.setData(pad(pn.points, dates));
+      (pn.levels || []).forEach(function (lv) {
+        s.createPriceLine({price: lv.value, color: 'rgba(232,227,211,.45)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: lv.label});
+      });
+      charts.push(ch); prim.push(s);
+    });
+
+    var pnlSeries = null;
+    if (c.pnl.length) {
+      var pc = pane(c.pnl_label, 120);
+      pnlSeries = pc.addBaselineSeries({baseValue: {type: 'price', price: 0}, lineWidth: 2,
+        topLineColor: C.up, topFillColor1: 'rgba(127,191,127,.28)', topFillColor2: 'rgba(127,191,127,.04)',
+        bottomLineColor: C.dn, bottomFillColor1: 'rgba(201,122,122,.04)', bottomFillColor2: 'rgba(201,122,122,.28)',
+        priceLineVisible: false, priceFormat: {type: 'price', precision: 2, minMove: 0.01}});
+      pnlSeries.setData(pad(c.pnl, dates));
+      pnlSeries.createPriceLine({price: 0, color: 'rgba(232,227,211,.3)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: ''});
+      charts.push(pc); prim.push(pnlSeries);
+    }
+
+    // Only the bottom pane shows the time axis.
+    charts.forEach(function (ch, i) { ch.applyOptions({timeScale: {visible: i === charts.length - 1}}); });
+
+    // Sync pan/zoom across panes, and remember it across the 60s auto-refresh.
+    var syncing = false, key = 'meridian.range.' + c.id;
+    charts.forEach(function (src) {
+      src.timeScale().subscribeVisibleLogicalRangeChange(function (r) {
+        if (syncing || !r) return;
+        syncing = true;
+        charts.forEach(function (dst) { if (dst !== src) dst.timeScale().setVisibleLogicalRange(r); });
+        syncing = false;
+        store(key, JSON.stringify(r));
+      });
+    });
+    var saved = load(key);
+    if (saved) { try { price.timeScale().setVisibleLogicalRange(JSON.parse(saved)); } catch (e) {} }
+    else { price.timeScale().setVisibleLogicalRange({from: Math.max(0, dates.length - (narrow ? 70 : 130)), to: dates.length + 2}); }
+
+    // Hover readout: OHLC + every overlay value on the hovered bar.
+    var ohlc = root.querySelector('.tc-ohlc');
+    function readout(t) {
+      var i = t ? dates.indexOf(t) : dates.length - 1;
+      if (i < 0) i = dates.length - 1;
+      var b = c.candles[i], html = '<b>' + esc(b.time) + '</b> &nbsp;O ' + fmt(b.open) + ' H ' + fmt(b.high) + ' L ' + fmt(b.low) + ' C <b>' + fmt(b.close) + '</b>';
+      c.overlays.forEach(function (o) {
+        var p = null; for (var k = 0; k < o.points.length; k++) { if (o.points[k].time === b.time) { p = o.points[k]; break; } }
+        if (p) html += ' &nbsp;·&nbsp; ' + esc(o.label) + ' ' + fmt(p.value);
+      });
+      for (var k = 0; k < c.pnl.length; k++) if (c.pnl[k].time === b.time) { html += ' &nbsp;·&nbsp; P&amp;L <b>' + fmt(c.pnl[k].value) + '</b>'; break; }
+      ohlc.innerHTML = html;
+    }
+    readout(null);
+    charts.forEach(function (src) {
+      src.subscribeCrosshairMove(function (param) {
+        readout(param && param.time ? param.time : null);
+        if (syncing) return;
+        syncing = true;
+        charts.forEach(function (dst, j) {
+          if (dst === src || !dst.setCrosshairPosition) return;
+          if (param && param.time) dst.setCrosshairPosition(NaN, param.time, prim[j]);
+          else dst.clearCrosshairPosition();
+        });
+        syncing = false;
+      });
+    });
+
+    // Legend toggles.
+    root.querySelectorAll('button[data-ov]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var on = btn.getAttribute('aria-pressed') !== 'true';
+        btn.setAttribute('aria-pressed', on);
+        ovSeries[+btn.dataset.ov].applyOptions({visible: on});
+      });
+    });
+  }
+
+  var openHost = document.getElementById('at-open');
+  if (openHost) openHost.innerHTML = A.open.map(cardHtml).join('');
+  var closedHost = document.getElementById('at-closed');
+  if (closedHost) {
+    closedHost.innerHTML = A.closed.map(function (c) {
+      var h = c.headline || {};
+      return '<details class="closed" data-id="' + c.id + '"><summary><span>' + esc(c.title) + ' <span class="mut">· ' +
+        esc(c.traders.map(function (t) { return t.callsign; }).join(', ') || 'unattributed') + ' · ' + esc(c.subtitle) + '</span></span><span class="r ' + (h.cls || '') + '">' +
+        esc(h.value) + ' ' + esc(h.pct) + '</span></summary>' + cardHtml(c) + '</details>';
+    }).join('');
+    closedHost.querySelectorAll('details.closed').forEach(function (d) {
+      d.addEventListener('toggle', function () {
+        if (d.open) { var c = A.closed.filter(function (x) { return x.id === d.dataset.id; })[0]; if (c) draw(c); }
+      });
+    });
+  }
+
+  // Draw open cards when the tab is first shown (charts need a laid-out width).
+  function drawOpen() { A.open.forEach(draw); }
+  var page = document.getElementById('p-active');
+  if (page && page.classList.contains('active')) drawOpen();
+  document.querySelectorAll('.tab[data-tab="active"]').forEach(function (t) { t.addEventListener('click', function () { setTimeout(drawOpen, 0); }); });
+  window.addEventListener('hashchange', function () { if (location.hash === '#active') setTimeout(drawOpen, 0); });
 })();
 </script>
 </body>
