@@ -367,6 +367,21 @@ def build_operator_action(action: str, detail: str,
     return f"{action}: {detail}", blocks
 
 
+def build_data_alert(stale: dict, now: datetime | None = None) -> tuple[str, list[dict]]:
+    """`stale`: symbol -> David's reason. One message for the whole run."""
+    lines = "\n".join(f"• *{esc(sym)}* — {esc(reason)}" for sym, reason in stale.items())
+    blocks = [
+        _header(":warning: Stale price data — tickers frozen"),
+        _context(_stamp(now)),
+        _section(lines),
+        _section("These tickers were *not traded* this run (held positions kept, no buys "
+                 "or sells). Wong refetched once before giving up. If it repeats "
+                 "tomorrow, the data source needs a look."),
+    ]
+    names = ", ".join(stale)
+    return f"⚠️ Stale price data — {names} frozen this run", blocks
+
+
 def build_failure(stage: str, exc: BaseException, impact: str = "",
                   now: datetime | None = None) -> tuple[str, list[dict]]:
     tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
@@ -388,7 +403,7 @@ def build_failure(stage: str, exc: BaseException, impact: str = "",
 class Notifier:
     """The only thing in Meridian that decides whether a message is sent."""
 
-    URGENT = {"halts", "failures"}
+    URGENT = {"halts", "failures", "data_alerts"}
 
     #: Which agent's bot identity owns each desk's halt/halt-cleared message.
     _DESK_AGENT = {"stock desk": "Cornelius", "options desk": "Joseph"}
@@ -549,6 +564,11 @@ class Notifier:
 
     def operator_action(self, action: str, detail: str) -> bool:
         return self._send("operator_actions", "George", build_operator_action, action, detail)
+
+    def data_alert(self, stale: dict) -> bool:
+        if not stale:
+            return False
+        return self._send("data_alerts", "David", build_data_alert, stale)
 
     def failure(self, stage: str, exc: BaseException, impact: str = "") -> bool:
         return self._send("failures", "George", build_failure, stage, exc, impact)

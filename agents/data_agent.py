@@ -23,6 +23,7 @@ import pandas as pd
 
 from utils.config import Config
 from utils.logging_setup import get_logger
+from utils.market_calendar import exchange_now, expected_last_bar, sessions_between
 
 log = get_logger("data", agent="Wong")
 
@@ -106,6 +107,10 @@ class DataAgent:
         cached = self._read_cache(symbol) if self.use_cache else None
         if cached is not None and asset_class == "crypto":
             cached = self._drop_open_crypto_bar(symbol, cached)
+        if cached is not None and self._behind(symbol, asset_class, cached, "cache"):
+            # A cache written before today's close holds yesterday's bars;
+            # serving it for 12h is how a whole run ended up a session behind.
+            cached = None
         if cached is not None:
             log.info("Loaded %s from cache: %d bars", symbol, len(cached))
             return MarketData(symbol, asset_class, cached, "cache",
@@ -119,14 +124,19 @@ class DataAgent:
             bars = self._normalize(bars)
             if asset_class == "crypto":
                 bars = self._drop_open_crypto_bar(symbol, bars)
+            else:
+                bars = self._drop_open_stock_bar(symbol, bars)
             if bars.empty:
                 raise ValueError("source returned no rows")
             if self.use_cache:
                 self._write_cache(symbol, bars)
             log.info("Fetched %s: %d bars (%s), last %s",
                      symbol, len(bars), source, bars.index[-1].date())
+            notes = []
+            if self._behind(symbol, asset_class, bars, source):
+                notes.append("feed is behind the latest completed session")
             return MarketData(symbol, asset_class, bars, source,
-                              datetime.now(timezone.utc))
+                              datetime.now(timezone.utc), notes)
         except Exception as exc:
             log.warning("Live fetch failed for %s (%s)", symbol, exc)
             if not self.allow_synthetic:
@@ -139,9 +149,15 @@ class DataAgent:
         import yfinance as yf
 
         start = datetime.now(timezone.utc) - timedelta(days=self.history_days + 10)
+        # Explicit, exclusive end = tomorrow (exchange date). Leaving `end`
+        # to yfinance's default returned bars only through the PREVIOUS
+        # session at the 8:15 PM run (every run 9/30-10/05 decided and filled
+        # on yesterday's close). An intraday bar this pulls in before the
+        # close is dropped by _drop_open_stock_bar.
+        end = exchange_now().date() + timedelta(days=1)
         ticker = yf.Ticker(symbol)
-        raw = ticker.history(start=start.date().isoformat(), interval="1d",
-                             auto_adjust=True, raise_errors=True)
+        raw = ticker.history(start=start.date().isoformat(), end=end.isoformat(),
+                             interval="1d", auto_adjust=True, raise_errors=True)
         if raw is None or raw.empty:
             raise ValueError(f"yfinance returned nothing for {symbol}")
         raw = raw.rename(columns=str.lower)
@@ -226,6 +242,36 @@ class DataAgent:
                           datetime.now(timezone.utc), [note])
 
     # ------------------------------------------------------------------- helpers
+
+    def _behind(self, symbol: str, asset_class: str, bars: pd.DataFrame, source: str) -> bool:
+        """True (and logged) when `bars` end before the newest completed session."""
+        if bars.empty:
+            return True
+        last = bars.index[-1].date()
+        expected = expected_last_bar(asset_class, self.config)
+        if last >= expected:
+            return False
+        missing = sessions_between(last, expected, asset_class, self.config)
+        log.warning("%s: %s data ends %s but the %s %s has closed (%d bar(s) behind)%s",
+                    symbol, source, last, expected,
+                    "candle" if asset_class == "crypto" else "session", missing,
+                    " -- refetching" if source == "cache" else "")
+        return True
+
+    def _drop_open_stock_bar(self, symbol: str, bars: pd.DataFrame,
+                             now: datetime | None = None) -> pd.DataFrame:
+        """Before 4:15 PM ET Yahoo's newest daily bar is the session still
+        trading. Strategies decide on closes, so keep only bars up to the
+        newest *completed* session."""
+        if bars.empty:
+            return bars
+        cutoff = pd.Timestamp(expected_last_bar("stocks", self.config, now))
+        complete = bars[bars.index <= cutoff]
+        dropped = len(bars) - len(complete)
+        if dropped:
+            log.info("%s: dropped %d in-progress daily bar(s) after %s",
+                     symbol, dropped, cutoff.date())
+        return complete
 
     @staticmethod
     def _drop_open_crypto_bar(symbol: str, bars: pd.DataFrame,

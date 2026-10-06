@@ -77,6 +77,11 @@ compliance:
   stale_after_trading_days: 3
   # >50% day-over-day move suggests an unadjusted corporate action.
   max_daily_move_pct: 0.50
+  # Block any ticker whose newest bar isn't the newest completed session
+  # (today's close after 4:15 PM ET on a trading day). Added 2026-10-05 after
+  # every evening run from 9/30 decided and filled on the previous close.
+  # Blocked tickers are frozen for the run: no buys, no sells.
+  require_latest_session: true
 
 risk:
   profile: balanced
@@ -326,6 +331,7 @@ slack:
     halts: true             # killswitch pulls and the options loss cutoff
     failures: true          # a paper/research run or the options leg crashed
     operator_actions: true  # clear-halt, bench, unbench
+    data_alerts: true       # a ticker frozen because its price feed is a session behind
 
 visual: 
   # Spec §12 — classic Wall Street: navy/gold, serif.

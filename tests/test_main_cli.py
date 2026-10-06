@@ -430,9 +430,10 @@ def _stub_run_paper(monkeypatch, tmp_path, market, regime_report, *, options_fai
         def mark_to_market(self, prices):
             return 5000.0
 
-    def fake_execute(self, market_, netted, adjustments=None):
+    def fake_execute(self, market_, netted, adjustments=None, frozen=None):
         seen["order"].append("cornelius")
         seen["cornelius"] = netted
+        seen["frozen"] = frozen
         return _Ledger()
 
     def fake_george(self, market_, compliance, results, benchmarks, risk, regime, **k):
@@ -484,6 +485,15 @@ def test_run_paper_routes_spy_to_options_and_keeps_the_dashboard_honest(tmp_path
     assert seen["options_market"] is market                # same bars, not a second read
     assert seen["options_blocked"] == {"QQQ": "blocked for test"}
     assert seen["order"] == ["cornelius", "george", "print", "options"]
+
+
+def test_run_paper_freezes_compliance_blocked_tickers_at_cornelius(tmp_path, monkeypatch):
+    """A ticker David blocks (e.g. a stale feed) is handed to Cornelius as
+    frozen: never bought or sold on data that failed compliance."""
+    market = {"SPY": object(), "AAPL": object()}
+    cfg, seen = _stub_run_paper(monkeypatch, tmp_path, market, _report_with_spy_and_aapl())
+    main.run_paper(cfg, post_slack=False)
+    assert seen["frozen"] == {"QQQ": "blocked for test"}
 
 
 def test_run_paper_survives_an_options_leg_failure(tmp_path, monkeypatch):

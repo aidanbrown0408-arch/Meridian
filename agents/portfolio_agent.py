@@ -174,8 +174,15 @@ class PaperBroker:
 
     def execute(self, market: dict[str, MarketData],
                netted_positions: dict[str, NettedPosition],
-               regime_adjustments: list | None = None) -> PaperLedger:
-        """Rebalance the paper ledger toward today's target weights."""
+               regime_adjustments: list | None = None,
+               frozen: dict[str, str] | None = None) -> PaperLedger:
+        """Rebalance the paper ledger toward today's target weights.
+
+        `frozen` (symbol -> reason) are tickers David blocked this run. They
+        are not traded in either direction: a block means the data can't be
+        trusted, and selling on bad data is as wrong as buying on it. Held
+        positions are kept and still marked at the last price available."""
+        frozen = frozen or {}
         ledger = self.load_ledger()
         if ledger.halted:
             log.warning("HALTED (%s) -- refusing to trade until the operator clears it "
@@ -187,6 +194,11 @@ class PaperBroker:
         equity = ledger.mark_to_market(prices)
 
         for symbol, price in prices.items():
+            if symbol in frozen:
+                if symbol in ledger.positions:
+                    log.warning("%s held, not traded: blocked by compliance (%s).",
+                                symbol, frozen[symbol])
+                continue
             asset_class = market[symbol].asset_class
             netted = netted_positions.get(symbol, NettedPosition(symbol, 0.0, False, []))
             bar_date = market[symbol].bars.index[-1].date().isoformat()

@@ -226,6 +226,15 @@ Cornelius now records `traders` and `bar_date` on every fill, and Joseph records
 quoted mark per day on each open contract, so attribution and option P&L history are
 on record rather than inferred.
 
+**Stale feeds are blocked, not traded.** From 9/30 to 10/05 every 8:15 PM run decided
+and filled on the *previous* session's close: Wong asked yfinance for history without an
+end date and got bars only through yesterday, and David's 3-day staleness rule let one
+day slide. Now Wong requests through tomorrow explicitly, drops any still-trading
+intraday bar, and refetches a cache that's behind; David blocks any ticker whose newest
+bar isn't the newest completed session (`utils/market_calendar.py`, NYSE holidays
+through 2028); Cornelius freezes every blocked ticker (no buys, no sells — this applies
+to all of David's blocks); and David posts one urgent Slack alert naming them.
+
 **Slack posting never raises.** `utils/slack.py` POSTs via stdlib `urllib`, returns
 `False` on any failure or missing webhook, and always logs the message it would have
 sent — a Slack outage must never take down the research pipeline.

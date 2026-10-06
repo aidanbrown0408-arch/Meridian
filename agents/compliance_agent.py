@@ -5,13 +5,18 @@ A symbol that fails any check is blocked for the day: no strategy runs
 against it, and the report says why. A problem with SPY never stops QQQ or
 BTC/USDT from trading — blocking is per symbol, not global.
 
-Four checks, each independent and each able to block on its own:
+Five checks, each independent and each able to block on its own:
   * no multi-day gaps in the trading-day series (crypto uses calendar days
     instead of business days — it has no weekend to speak of)
   * no zero or negative prices
   * no obviously stale feed (last bar too many trading days old)
   * no implausible day-over-day move (>50%, suggesting an unadjusted
     corporate action rather than a real price move)
+  * current: the newest bar IS the newest completed session (today's close
+    after 4:15 PM ET on a trading day). One session behind is enough to
+    block -- deciding and filling on yesterday's close misstates every fill
+    and can act on a signal that already reversed. A blocked ticker is
+    frozen for the day: no new trades in either direction.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import pandas as pd
 
 from utils.config import Config
 from utils.logging_setup import get_logger
+from utils.market_calendar import expected_last_bar, sessions_between
 from agents.data_agent import MarketData
 
 log = get_logger("compliance", agent="David")
@@ -61,6 +67,8 @@ class ComplianceAgent:
         self.max_gap_days = int(config.get("compliance.max_gap_trading_days", 3))
         self.stale_after_days = int(config.get("compliance.stale_after_trading_days", 3))
         self.max_daily_move = float(config.get("compliance.max_daily_move_pct", 0.50))
+        self.require_latest_session = bool(config.get("compliance.require_latest_session", True))
+        self.now = None  # tests pin the clock here
 
     def review(self, market: dict[str, MarketData]) -> dict[str, ComplianceReport]:
         """One report per symbol, whether or not it ends up blocked."""
@@ -83,7 +91,23 @@ class ComplianceAgent:
         report.checks.append(self._check_gaps(bars, data.asset_class))
         report.checks.append(self._check_staleness(bars, data.asset_class))
         report.checks.append(self._check_moves(bars))
+        if self.require_latest_session and not data.is_synthetic:
+            report.checks.append(self._check_current(bars, data.asset_class))
         return report
+
+    def _check_current(self, bars: pd.DataFrame, asset_class: str) -> ComplianceCheck:
+        if bars.empty:
+            return ComplianceCheck("current", False, "no bars at all")
+        last = bars.index[-1].date()
+        expected = expected_last_bar(asset_class, self.config, self.now)
+        if last >= expected:
+            return ComplianceCheck("current", True)
+        missing = sessions_between(last, expected, asset_class, self.config)
+        what = "candle" if asset_class == "crypto" else "close"
+        return ComplianceCheck(
+            "current", False,
+            f"stale feed: last bar {last} but the {expected} {what} is final "
+            f"({missing} bar(s) behind) -- not trading on an old price")
 
     # ------------------------------------------------------------------ checks
 

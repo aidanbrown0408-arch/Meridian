@@ -37,6 +37,7 @@ from strategies.orbit import OrbitStrategy
 from strategies.revert import RevertStrategy, rsi
 from strategies.surge import SurgeStrategy
 from utils.logging_setup import get_logger
+from utils.market_calendar import expected_last_bar as _expected_last_bar
 
 log = get_logger("trade_charts", agent="George")
 
@@ -110,22 +111,8 @@ def _now_local(config, now: datetime | None = None) -> datetime:
 
 
 def expected_last_bar(asset_class: str, config=None, now: datetime | None = None) -> date:
-    """The newest daily bar that *should* exist right now. Stocks: today's
-    session once it's past 4:15 PM Eastern on a weekday, else the previous
-    weekday (exchange holidays aren't modelled -- the stale note says so).
-    Crypto: yesterday's UTC candle (today's is still forming and Wong drops it)."""
-    if asset_class == "crypto":
-        utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        return utc.date() - timedelta(days=1)
-    local = _now_local(config, now)
-    d = local.date()
-    after_close = (local.hour, local.minute) >= (16, 15)
-    if d.weekday() < 5 and after_close:
-        return d
-    d -= timedelta(days=1)
-    while d.weekday() >= 5:
-        d -= timedelta(days=1)
-    return d
+    """Same rule David blocks on (utils/market_calendar.py), holidays included."""
+    return _expected_last_bar(asset_class, config, now)
 
 
 def data_status(md, config=None, now: datetime | None = None) -> dict:
@@ -137,8 +124,7 @@ def data_status(md, config=None, now: datetime | None = None) -> dict:
         note = (f"Price data ends {_pretty_date(last.isoformat())}; the "
                 f"{_pretty_date(expected.isoformat())} "
                 f"{'candle' if md.asset_class == 'crypto' else 'close'} isn't in this "
-                f"run's data" + ("" if md.asset_class == "crypto"
-                                 else " (unless that was a market holiday)") + ".")
+                f"run's data — David blocks trading on it until it catches up.")
     return {"through": last.isoformat(), "expected": expected.isoformat(),
             "stale": bool(stale), "stale_note": note,
             "source": md.data_source, "synthetic": bool(md.is_synthetic)}

@@ -191,7 +191,12 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
         ).netted_positions
         _warn_on_legacy_share_positions(cornelius, market, options_underlyings,
                                         stock_positions)
-    ledger = cornelius.execute(market, stock_positions, regime_report.adjustments)
+    stale = {sym: rep.reason for sym, rep in compliance.items()
+             if any(c.name == "current" and not c.passed for c in rep.checks)}
+    if stale:
+        notifier.data_alert(stale)
+    ledger = cornelius.execute(market, stock_positions, regime_report.adjustments,
+                               frozen=blocked)
     new_fills = ledger.trades[fills_before:]
     stock_prices = ReportingAgent._prices(market)
     notifier.stock_fills(new_fills, ledger.mark_to_market(stock_prices), ledger.cash)
