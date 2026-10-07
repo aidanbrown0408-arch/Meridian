@@ -165,7 +165,7 @@ footer{text-align:center;font-size:11px;color:var(--dim);padding:28px 0 36px}
 /* ---------- active trades ---------- */
 .at-sum{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:6px}
 .at-sum .stat{padding:11px 14px}
-.tc{margin-top:14px;padding:16px 18px 14px}
+.tc{margin-top:14px;padding:16px 18px 14px;scroll-margin-top:140px}
 .tc-hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
 .tc-title{font-family:'Playfair Display',Georgia,serif;font-size:22px;line-height:1.15}
 .tc-sub{font-size:11px;color:var(--dim);margin-top:3px;letter-spacing:.3px}
@@ -214,6 +214,37 @@ details.closed > summary{font-size:12px;padding:10px 14px;background:var(--navy2
 details.closed > summary .r{font-variant-numeric:tabular-nums}
 details.closed[open] > summary{border-radius:10px 10px 0 0}
 details.closed > .tc{margin-top:0;border-radius:0 0 10px 10px;border-top:0}
+/* chart toolbar, P&L strip, expanded view, open-book panel */
+.tc-bar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:4px 0 8px}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:7px;overflow:hidden}
+.seg button,.tbtn{appearance:none;background:none;border:0;color:var(--muted);font:inherit;font-size:11px;letter-spacing:.5px;
+     padding:0 10px;min-height:30px;min-width:34px;cursor:pointer}
+.seg button + button{border-left:1px solid var(--line)}
+.seg button:hover,.tbtn:hover{color:var(--parch);background:rgba(212,175,106,.06)}
+.seg button[aria-pressed="true"]{color:var(--navy);background:var(--gold)}
+.tbtn{border:1px solid var(--line2);border-radius:7px}
+.tbtn[aria-pressed="true"]{color:var(--gold);border-color:var(--gold)}
+.seg-l{font-size:9.5px;letter-spacing:1.4px;text-transform:uppercase;color:var(--dim);margin-right:-6px}
+.tc-bar .grow{flex:1}
+.seg button:focus-visible,.tbtn:focus-visible{outline:1px solid var(--gold);outline-offset:-2px}
+.tc-pstrip{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:2px 14px;margin:0 0 10px;padding:8px 12px;
+           background:rgba(0,0,0,.18);border-radius:8px}
+.tc-pstrip dt{font-size:10px;color:var(--muted);letter-spacing:.4px}
+.tc-pstrip dd{font-size:13.5px;font-variant-numeric:tabular-nums;margin-top:1px}
+.tc-pstrip dd small{font-size:10.5px;color:var(--dim);margin-left:4px}
+.pane-hint{position:absolute;right:84px;top:4px;z-index:3;font-size:10px;color:var(--dim);pointer-events:none}
+body.tc-lock{overflow:hidden}
+.tc.full{position:fixed;inset:0;z-index:200;margin:0;border-radius:0;overflow:auto;padding:16px 22px 18px;background:var(--navy2)}
+.tc.full .tc-rules,.tc.full .tc-notes,.tc.full details.fills,.tc.full .tc-stats{display:none}
+details.closed > .tc.full{border-radius:0}
+.book{margin-top:14px}
+.book-hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:6px}
+.book-pills{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.book-pills a{display:inline-flex;gap:8px;align-items:center;font-size:11.5px;color:var(--parch);text-decoration:none;
+              border:1px solid var(--line);border-radius:7px;padding:5px 9px;min-height:30px}
+.book-pills a:hover{border-color:var(--gold)}
+.book-pills i{width:9px;height:9px;border-radius:2px;display:inline-block}
+@media (max-width:640px){.tc-bar{gap:6px 8px}.seg-l{display:none}.pane-hint{display:none}.tc.full{padding:12px 10px}}
 .credit{font-size:10.5px;color:var(--dim);margin-top:18px}
 .credit a{color:var(--muted)}
 @media (max-width:900px){.at-sum{grid-template-columns:1fr 1fr}}
@@ -351,13 +382,15 @@ details.closed > .tc{margin-top:0;border-radius:0 0 10px 10px;border-top:0}
     <div class="card stat"><div class="eyebrow">{{ s.label }}</div><div class="v {{ s.cls }}">{{ s.value }}</div><div class="s" title="{{ s.sub }}">{{ s.sub }}</div></div>
     {% endfor %}
   </div>
+  <div id="at-book"></div>
   <div id="at-open"></div>
   {% if not v.active.open %}<div class="card" style="margin-top:14px"><p class="empty">No open positions on either desk. Charts appear here as soon as Cornelius or Joseph opens one.</p></div>{% endif %}
   {% if v.active.closed %}
   <div class="shdr">Closed trades <span class="aside">most recent first · realized P&amp;L after costs</span></div>
   <div id="at-closed"></div>
   {% endif %}
-  <p class="credit">How to read a chart: ▲ / ▼ arrows are actual ledger fills; small dots are the strategy's own entry (below the bar) and exit (above) signals at that day's close. Lines are the exact series the trader decides on. Hover for values; drag or scroll to pan and zoom; click a legend item to hide it.<br>
+  <p class="credit">How to read a chart: ▲ / ▼ arrows are actual ledger fills; small dots are the strategy's own entry (below the bar) and exit (above) signals at that day's close. Lines are the exact series the trader decides on.<br>
+  Navigating: <b>Trade</b> frames the position from entry; 1M–All are calendar ranges; D/W switches daily and weekly candles (weekly indicator lines are the value at each week's close). Scroll or pinch to zoom, drag to pan, drag the price axis to stretch it, double-click a chart to snap back. P&amp;L pane: <b>$</b>, <b>%</b> of capital, or <b>Δ</b> change per bar. ⤢ opens a card full-screen (Esc closes). Click a legend item to hide it.<br>
   Charts by <a href="https://www.tradingview.com/" target="_blank" rel="noopener">TradingView Lightweight Charts™</a> — Copyright © 2025 TradingView, Inc.</p>
 </section>
 
@@ -769,12 +802,105 @@ details.closed > .tc{margin-top:0;border-radius:0 0 10px 10px;border-top:0}
   var LC = window.LightweightCharts;
   var C = {bg:'#142544', text:'#A8A190', grid:'rgba(212,175,106,.07)', line:'rgba(212,175,106,.18)',
            up:'#7FBF7F', dn:'#C97A7A', parch:'#E8E3D3', gold:'#D4AF6A'};
+  var BOOK_COLORS = ['#D4AF6A', '#3987e5', '#c74a9a', '#8FB4D9', '#C9A0DC', '#7FBF7F'];
+  var RANGES = [['trade', 'Trade'], ['1M', '1M'], ['3M', '3M'], ['6M', '6M'], ['1Y', '1Y'], ['all', 'All']];
+  var MONTHS = {'1M': 1, '3M': 3, '6M': 6, '1Y': 12};
+  var USD = {type: 'custom', minMove: 0.01, formatter: function (v) { return (v < 0 ? '−$' : '$') + Math.abs(v).toFixed(2); }};
+  var PCT = {type: 'custom', minMove: 0.01, formatter: function (v) { return (v < 0 ? '−' : '') + Math.abs(v).toFixed(2) + '%'; }};
+
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); }
   function load(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }
   function store(k, v) { try { sessionStorage.setItem(k, v); } catch (e) {} }
   function fmt(x, d) { return x == null ? '—' : Number(x).toLocaleString('en-US', {minimumFractionDigits: d == null ? 2 : d, maximumFractionDigits: d == null ? 2 : d}); }
+  function money(x, signed) { if (x == null) return '—'; return (x < 0 ? '−' : (signed ? '+' : '')) + '$' + fmt(Math.abs(x)); }
+  function pct(x) { return x == null ? '' : (x < 0 ? '−' : '+') + Math.abs(x).toFixed(2) + '%'; }
+  function cls(x) { return x == null || x === 0 ? '' : (x > 0 ? 'up' : 'dn'); }
+  function shortDate(iso) { var d = new Date(iso + 'T12:00:00Z'); return isNaN(d) ? iso : d.toLocaleDateString('en-US', {month: 'short', day: 'numeric', timeZone: 'UTC'}); }
+  function byTime(a, b) { return a.time < b.time ? -1 : a.time > b.time ? 1 : 0; }
   function swatch(color, dash) {
     return '<svg width="22" height="8" aria-hidden="true"><line x1="1" y1="4" x2="21" y2="4" stroke="' + color + '" stroke-width="2"' + (dash ? ' stroke-dasharray="4 3"' : '') + '/></svg>';
+  }
+
+  // ------------------------------------------------------------ daily / weekly views
+  function weekKey(iso) {
+    var d = new Date(iso + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() - (d.getUTCDay() + 6) % 7);
+    return d.toISOString().slice(0, 10);
+  }
+  // Keep the last point in each bucket (a week's value is its closing value).
+  function lastPerBucket(points, bucket) {
+    var out = [], at = {};
+    points.forEach(function (p) {
+      var q = Object.assign({}, p, {time: bucket(p.time)});
+      if (at[q.time] != null) out[at[q.time]] = q; else { at[q.time] = out.length; out.push(q); }
+    });
+    return out.sort(byTime);
+  }
+  function toMap(points) { var m = {}; points.forEach(function (p) { m[p.time] = p; }); return m; }
+  function views(c) {
+    if (c._v) return c._v;
+    var wk = [], byKey = {}, map = {};
+    c.candles.forEach(function (b) {
+      var k = weekKey(b.time), w = byKey[k];
+      if (!w) { w = byKey[k] = {time: b.time, open: b.open, high: b.high, low: b.low, close: b.close}; wk.push(w); }
+      else { w.high = Math.max(w.high, b.high); w.low = Math.min(w.low, b.low); w.close = b.close; }
+      map[b.time] = w.time;
+    });
+    function wb(t) { if (map[t]) return map[t]; var w = byKey[weekKey(t)]; return w ? w.time : t; }
+    function make(candles, bucket) {
+      var ov = c.overlays.map(function (o) { return lastPerBucket(o.points, bucket); });
+      var pnl = lastPerBucket(c.pnl || [], bucket);
+      return {candles: candles, dates: candles.map(function (b) { return b.time; }), bucket: bucket,
+              overlays: ov, ovMaps: ov.map(toMap),
+              panes: c.panes.map(function (p) { return lastPerBucket(p.points, bucket); }),
+              pnl: pnl, pnlMap: toMap(pnl),
+              markers: c.markers.map(function (m) { return Object.assign({}, m, {time: bucket(m.time)}); }).sort(byTime)};
+    }
+    c._v = {D: make(c.candles, function (t) { return t; }), W: make(wk, wb)};
+    return c._v;
+  }
+
+  // Pad a series with whitespace on every candle date so all panes share
+  // one logical index and pan/zoom together exactly.
+  function pad(points, dates) {
+    var have = toMap(points), inDates = {}, out = [];
+    dates.forEach(function (d) { inDates[d] = 1; out.push(have[d] ? have[d] : {time: d}); });
+    points.forEach(function (p) { if (!inDates[p.time]) out.push(p); });
+    return out.sort(byTime);
+  }
+
+  function rangeFor(c, V, key) {
+    var n = V.dates.length, last = n - 1;
+    if (!n) return null;
+    if (key === 'all') return {from: -0.5, to: last + 2};
+    var from;
+    if (key === 'trade') from = c.focus ? c.focus.from : V.dates[Math.max(0, n - 130)];
+    else { var d = new Date(V.dates[last] + 'T12:00:00Z'); d.setUTCMonth(d.getUTCMonth() - MONTHS[key]); from = d.toISOString().slice(0, 10); }
+    var i = 0;
+    while (i < last && V.dates[i] < from) i++;
+    if (V.dates[i] > from && i > 0 && V === c._v.W) i--;   // include the week the range starts in
+    i = Math.min(i, Math.max(0, last - 6));                   // never zoom tighter than ~7 bars
+    return {from: i - 0.5, to: last + 2};
+  }
+
+  // ------------------------------------------------------------ card markup
+  function seg(group, items, label) {
+    return (label ? '<span class="seg-l">' + label + '</span>' : '') + '<div class="seg" role="group" aria-label="' + esc(label || group) + '" data-g="' + group + '">' +
+      items.map(function (it) { return '<button type="button" data-v="' + it[0] + '"' + (it[2] ? ' aria-label="' + it[2] + '" title="' + it[2] + '"' : '') + '>' + it[1] + '</button>'; }).join('') + '</div>';
+  }
+
+  function pstripHtml(c) {
+    var s = c.pnl_stats;
+    if (!s) return '';
+    var closed = c.status !== 'open';
+    var cells = [
+      [closed ? 'Final P&L' : 'P&L now', '<span class="' + cls(s.current) + '">' + money(s.current, true) + '</span><small>' + pct(s.current_pct) + '</small>'],
+      ['Best', '<span class="' + cls(s.peak) + '">' + money(s.peak, true) + '</span><small>' + shortDate(s.peak_time) + '</small>'],
+      ['Worst', '<span class="' + cls(s.trough) + '">' + money(s.trough, true) + '</span><small>' + shortDate(s.trough_time) + '</small>'],
+      ['Given back from best', s.peak > 0 ? (s.giveback > 0.004 ? '<span class="dn">' + money(-s.giveback, true) + '</span><small>' + (s.giveback >= s.peak ? 'all of it' : Math.round(s.giveback / s.peak * 100) + '% of it') + '</small>' : '<span class="up">at the high</span>') : '<span class="mut">never in profit</span>']
+    ];
+    if (s.change != null && !closed) cells.push(['Last change', '<span class="' + cls(s.change) + '">' + money(s.change, true) + '</span><small>since ' + shortDate(s.change_time) + '</small>']);
+    return '<dl class="tc-pstrip">' + cells.map(function (x) { return '<div><dt>' + x[0] + '</dt><dd>' + x[1] + '</dd></div>'; }).join('') + '</dl>';
   }
 
   function cardHtml(c) {
@@ -809,12 +935,21 @@ details.closed > .tc{margin-top:0;border-radius:0 0 10px 10px;border-top:0}
     var fills = c.markers.filter(function (m) { return m.shape !== 'circle'; });
     var ftable = fills.length ? '<details class="fills"><summary>Fills table (' + fills.length + ')</summary><table><tr><th>Bar</th><th>Fill</th></tr>' +
       fills.map(function (m) { return '<tr><td>' + esc(m.time) + '</td><td>' + esc(m.text) + '</td></tr>'; }).join('') + '</table></details>' : '';
+    var bar = '<div class="tc-bar">' +
+      seg('range', RANGES, 'Range') +
+      seg('iv', [['D', 'D', 'Daily bars'], ['W', 'W', 'Weekly bars']], 'Bars') +
+      (c.pnl && c.pnl.length ? seg('pnl', [['usd', '$', 'P&L in dollars'], ['pct', '%', 'P&L in percent'], ['chg', 'Δ', 'P&L change per bar']], 'P&L') : '') +
+      '<span class="grow"></span>' +
+      seg('zoom', [['out', '−', 'Zoom out'], ['in', '+', 'Zoom in'], ['reset', 'Reset', 'Reset view']]) +
+      '<button class="tbtn" type="button" data-t="log" aria-pressed="false" title="Logarithmic price scale">Log</button>' +
+      '<button class="tbtn" type="button" data-t="full" aria-pressed="false">⤢ Expand</button></div>';
     var d = c.data || {};
     var h = c.headline || {};
     return '<div class="card tc" id="' + c.id + '">' +
       '<div class="tc-hdr"><div><div class="tc-title">' + esc(c.title) + '</div><div class="tc-sub">' + esc(c.subtitle) + '</div><div class="tc-chips">' + chips + '</div></div>' +
       '<div class="tc-pnl"><div class="l">' + esc(h.label) + '</div><div class="v ' + (h.cls || '') + '">' + esc(h.value) + '</div><div class="p ' + (h.cls || '') + '">' + esc(h.pct) + '</div></div></div>' +
-      '<dl class="tc-stats">' + stats + '</dl>' +
+      '<dl class="tc-stats">' + stats + '</dl>' + pstripHtml(c) +
+      bar +
       '<div class="tc-legend">' + legend + '</div>' +
       '<div class="tc-ohlc" aria-live="off"></div>' +
       '<div class="panes"></div>' +
@@ -830,132 +965,250 @@ details.closed > .tc{margin-top:0;border-radius:0 0 10px 10px;border-top:0}
       layout: {background: {type: 'solid', color: C.bg}, textColor: C.text, fontFamily: 'Georgia, serif', fontSize: 11},
       grid: {vertLines: {color: C.grid}, horzLines: {color: C.grid}},
       rightPriceScale: {borderColor: C.line, minimumWidth: 74},
-      timeScale: {borderColor: C.line, rightOffset: 3, minBarSpacing: 2},
+      timeScale: {borderColor: C.line, rightOffset: 3, minBarSpacing: 1.5},
       crosshair: {mode: 0, vertLine: {color: 'rgba(232,227,211,.35)', labelBackgroundColor: '#1A3055'},
                   horzLine: {color: 'rgba(232,227,211,.35)', labelBackgroundColor: '#1A3055'}},
-      handleScale: {axisPressedMouseMove: {time: true, price: false}},
+      handleScale: {axisPressedMouseMove: {time: true, price: true}, axisDoubleClickReset: {time: true, price: true}},
       localization: {locale: 'en-US', dateFormat: 'yyyy-MM-dd'}
     };
     if (opts && opts.layout) base.layout = Object.assign({}, base.layout, opts.layout);
-    var ch = LC.createChart(el, base);
     el.style.height = height + 'px';
-    return ch;
+    return LC.createChart(el, base);
   }
 
-  // Pad a series with whitespace on every candle date so all panes share
-  // one logical index and pan/zoom together exactly.
-  function pad(points, dates) {
-    var have = {}; points.forEach(function (p) { have[p.time] = p; });
-    var lo = points.length ? points[0].time : null, hi = points.length ? points[points.length - 1].time : null;
-    var out = [];
-    dates.forEach(function (d) { out.push(have[d] ? have[d] : {time: d}); });
-    // keep points that fall on dates not in the candle set (e.g. option marks on a holiday-less run)
-    points.forEach(function (p) { if (dates.indexOf(p.time) < 0) out.push(p); });
-    out.sort(function (a, b) { return a.time < b.time ? -1 : a.time > b.time ? 1 : 0; });
-    return out;
-  }
-
+  // ------------------------------------------------------------ one card's charts
+  var fullCard = null;
   function draw(c) {
     var root = document.getElementById(c.id);
     if (!root || root.dataset.drawn) return;
     root.dataset.drawn = '1';
     var panesEl = root.querySelector('.panes');
-    var dates = c.candles.map(function (b) { return b.time; });
-    var charts = [], prim = [];
+    var key = 'meridian.view.' + c.id;
+    var st = {range: 'trade', iv: 'D', pnl: 'usd', log: false, full: false, lr: null};
+    try { Object.assign(st, JSON.parse(load(key) || '{}')); } catch (e) {}
+    function save() { store(key, JSON.stringify(st)); }
+    var V = views(c)[st.iv];
+    var charts = [], prim = [], paneEls = [];
 
-    function pane(label, h) {
-      var p = document.createElement('div'); p.className = 'pane';
-      if (label) { var l = document.createElement('div'); l.className = 'pane-l'; l.textContent = label; p.appendChild(l); }
-      panesEl.appendChild(p);
+    function pane(label, h, kind) {
+      var p = document.createElement('div'); p.className = 'pane'; p.dataset.kind = kind;
+      var l = null;
+      if (label) { l = document.createElement('div'); l.className = 'pane-l'; l.textContent = label; p.appendChild(l); }
+      panesEl.appendChild(p); paneEls.push(p);
       // TradingView's attribution mark on the price pane only.
-      return mkChart(p, h, charts.length ? {layout: {attributionLogo: false}} : null);
+      return {chart: mkChart(p, h, charts.length ? {layout: {attributionLogo: false}} : null), label: l, el: p};
     }
 
-    var narrow = window.innerWidth < 640;
-    var price = pane(c.book === 'options' ? c.symbol + ' (underlying)' : '', narrow ? 260 : 330);
+    var P = pane(c.book === 'options' ? c.symbol + ' (underlying)' : '', 330, 'price');
+    var price = P.chart;
+    var hint = document.createElement('div'); hint.className = 'pane-hint'; hint.textContent = 'scroll to zoom · drag to pan · double-click to reset';
+    P.el.appendChild(hint);
     var candles = price.addCandlestickSeries({upColor: C.up, downColor: C.dn, wickUpColor: C.up, wickDownColor: C.dn, borderVisible: false,
                                               priceFormat: {type: 'price', precision: 2, minMove: 0.01}});
-    candles.setData(c.candles);
     var ovSeries = c.overlays.map(function (o) {
-      var s = price.addLineSeries({color: o.color, lineWidth: 2, lineStyle: o.dash ? 2 : 0, lineType: o.step ? 1 : 0,
-                                   priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, title: ''});
-      s.setData(pad(o.points, dates));
-      return s;
+      return price.addLineSeries({color: o.color, lineWidth: 2, lineStyle: o.dash ? 2 : 0, lineType: o.step ? 1 : 0,
+                                  priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false, title: ''});
     });
     c.price_lines.forEach(function (p) {
       candles.createPriceLine({price: p.price, color: p.color, lineWidth: 1, lineStyle: p.dash ? 2 : 0, axisLabelVisible: true, title: p.label});
     });
-    var inRange = function (m) { return m.time >= dates[0] && m.time <= dates[dates.length - 1]; };
-    candles.setMarkers(c.markers.filter(inRange).map(function (m) {
-      return {time: m.time, position: m.position, shape: m.shape, color: m.color, size: m.size || 1,
-              text: m.shape === 'circle' ? '' : m.text};
-    }));
-    charts.push(price); prim.push(candles);
+    charts.push(price); prim.push(function () { return candles; });
 
-    c.panes.forEach(function (pn) {
-      var ch = pane(pn.label, 110);
+    var paneSeries = c.panes.map(function (pn) {
+      var ch = pane(pn.label, 110, 'ind').chart;
       if (pn.min != null) ch.applyOptions({rightPriceScale: {scaleMargins: {top: 0.08, bottom: 0.08}}});
       var s = ch.addLineSeries({color: pn.color, lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
         autoscaleInfoProvider: pn.min != null ? function () { return {priceRange: {minValue: pn.min, maxValue: pn.max}}; } : undefined});
-      s.setData(pad(pn.points, dates));
       (pn.levels || []).forEach(function (lv) {
         s.createPriceLine({price: lv.value, color: 'rgba(232,227,211,.45)', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: lv.label});
       });
-      charts.push(ch); prim.push(s);
+      charts.push(ch); prim.push(function () { return s; });
+      return s;
     });
 
-    var pnlSeries = null;
+    var pnlSeries = null, chgSeries = null, PP = null;
     if (c.pnl.length) {
-      var pc = pane(c.pnl_label, 120);
+      PP = pane(c.pnl_label, 150, 'pnl');
+      var pc = PP.chart;
+      pc.applyOptions({rightPriceScale: {scaleMargins: {top: 0.12, bottom: 0.08}}});
       pnlSeries = pc.addBaselineSeries({baseValue: {type: 'price', price: 0}, lineWidth: 2,
         topLineColor: C.up, topFillColor1: 'rgba(127,191,127,.28)', topFillColor2: 'rgba(127,191,127,.04)',
         bottomLineColor: C.dn, bottomFillColor1: 'rgba(201,122,122,.04)', bottomFillColor2: 'rgba(201,122,122,.28)',
-        priceLineVisible: false, priceFormat: {type: 'price', precision: 2, minMove: 0.01}});
-      pnlSeries.setData(pad(c.pnl, dates));
+        priceLineVisible: false, priceFormat: USD});
       pnlSeries.createPriceLine({price: 0, color: 'rgba(232,227,211,.3)', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: ''});
-      charts.push(pc); prim.push(pnlSeries);
+      chgSeries = pc.addHistogramSeries({priceFormat: USD, priceLineVisible: false, lastValueVisible: true, visible: false});
+      charts.push(pc); prim.push(function () { return st.pnl === 'chg' ? chgSeries : pnlSeries; });
     }
 
     // Only the bottom pane shows the time axis.
     charts.forEach(function (ch, i) { ch.applyOptions({timeScale: {visible: i === charts.length - 1}}); });
 
-    // Sync pan/zoom across panes, and remember it across the 60s auto-refresh.
-    var syncing = false, key = 'meridian.range.' + c.id;
+    function setPnl() {
+      if (!pnlSeries) return;
+      var unit = st.iv === 'W' ? 'week' : 'day';
+      if (st.pnl === 'chg') {
+        var prev = 0;
+        var out = V.pnl.map(function (p) {
+          var v = Math.round((p.value - prev) * 100) / 100; prev = p.value;
+          return {time: p.time, value: v, color: v >= 0 ? 'rgba(127,191,127,.8)' : 'rgba(201,122,122,.85)'};
+        });
+        pnlSeries.applyOptions({visible: false, priceFormat: USD}); pnlSeries.setMarkers([]);
+        chgSeries.applyOptions({visible: true});
+        chgSeries.setData(pad(out, V.dates));
+        PP.label.textContent = c.pnl_label + ' · change per ' + unit + ' ($)';
+        return;
+      }
+      var usePct = st.pnl === 'pct';
+      chgSeries.applyOptions({visible: false});
+      pnlSeries.applyOptions({visible: true, priceFormat: usePct ? PCT : USD});
+      pnlSeries.setData(pad(V.pnl.filter(function (p) { return !usePct || p.pct != null; })
+        .map(function (p) { return {time: p.time, value: usePct ? p.pct : p.value}; }), V.dates));
+      var S = c.pnl_stats, ms = [];
+      if (S && S.points > 2) {
+        if (S.peak > 0) ms.push({time: V.bucket(S.peak_time), position: 'aboveBar', shape: 'circle', color: C.gold, size: 0.7, text: 'best'});
+        if (S.trough < 0) ms.push({time: V.bucket(S.trough_time), position: 'belowBar', shape: 'circle', color: C.dn, size: 0.7, text: 'worst'});
+      }
+      pnlSeries.setMarkers(ms.sort(byTime));
+      PP.label.textContent = c.pnl_label + (usePct ? ' · ' + (c.pnl_basis || '%') : ' · $');
+    }
+
+    function setData() {
+      V = views(c)[st.iv];
+      candles.setData(V.candles);
+      ovSeries.forEach(function (s, i) { s.setData(pad(V.overlays[i], V.dates)); });
+      paneSeries.forEach(function (s, i) { s.setData(pad(V.panes[i], V.dates)); });
+      var lo = V.dates[0], hi = V.dates[V.dates.length - 1];
+      candles.setMarkers(V.markers.filter(function (m) { return m.time >= lo && m.time <= hi; }).map(function (m) {
+        return {time: m.time, position: m.position, shape: m.shape, color: m.color, size: m.size || 1,
+                text: m.shape === 'circle' ? '' : m.text};
+      }));
+      setPnl();
+    }
+
+    // -------- view state: range presets, interval, zoom, log, full screen
+    var dragging = false, wheelT = 0, syncing = false;
+    panesEl.addEventListener('pointerdown', function () { dragging = true; });
+    window.addEventListener('pointerup', function () { dragging = false; });
+    window.addEventListener('pointercancel', function () { dragging = false; });
+    panesEl.addEventListener('wheel', function () { wheelT = Date.now(); }, {passive: true});
+
+    function setRange(r) { if (r) price.timeScale().setVisibleLogicalRange(r); }
+    function applyRange() {
+      if (st.range === 'custom' && st.lr) setRange(st.lr);
+      else setRange(rangeFor(c, V, st.range === 'custom' ? 'trade' : st.range));
+      charts.forEach(function (ch) { ch.priceScale('right').applyOptions({autoScale: true}); });
+      sync();
+    }
+    function snap() { if (st.range === 'custom') st.range = 'trade'; st.lr = null; save(); applyRange(); }
+    function zoom(f) {
+      var r = price.timeScale().getVisibleLogicalRange(); if (!r) return;
+      var n = V.dates.length, span = Math.max(8, Math.min(n + 12, (r.to - r.from) * f));
+      var right = r.to >= n - 1.5 ? r.to : (r.from + r.to) / 2 + span / 2;
+      st.range = 'custom'; st.lr = {from: right - span, to: right}; save();
+      setRange(st.lr); sync();
+    }
+    function setInterval_(iv) {
+      if (iv === st.iv) return;
+      var keep = null;
+      if (st.range === 'custom') {
+        var r = price.timeScale().getVisibleLogicalRange(), d = V.dates;
+        if (r) keep = [d[Math.max(0, Math.min(d.length - 1, Math.ceil(r.from)))], r.to - (d.length - 1)];
+      }
+      st.iv = iv; setData();
+      if (keep) {
+        var b = V.bucket(keep[0]), i = 0;
+        while (i < V.dates.length - 1 && V.dates[i] < b) i++;
+        st.lr = {from: i - 0.5, to: V.dates.length - 1 + Math.max(2, keep[1])};
+      }
+      save(); applyRange(); readout(null);
+    }
+    function setLog(on) {
+      st.log = on; save();
+      price.priceScale('right').applyOptions({mode: on ? (LC.PriceScaleMode ? LC.PriceScaleMode.Logarithmic : 1) : 0});
+      sync();
+    }
+    function sizePanes() {
+      var full = root.classList.contains('full'), narrow = window.innerWidth < 640;
+      var nInd = paneEls.filter(function (p) { return p.dataset.kind === 'ind'; }).length;
+      var indH = full ? 130 : 110, pnlH = full ? 190 : (narrow ? 130 : 150);
+      var priceH = narrow ? 260 : 330;
+      if (full) {
+        var top = panesEl.getBoundingClientRect().top - root.getBoundingClientRect().top;
+        priceH = Math.max(280, window.innerHeight - top - nInd * indH - (PP ? pnlH : 0) - 56);
+      }
+      paneEls.forEach(function (p) { p.style.height = (p.dataset.kind === 'price' ? priceH : p.dataset.kind === 'pnl' ? pnlH : indH) + 'px'; });
+    }
+    function setFull(on) {
+      if (on && fullCard && fullCard !== setFull) fullCard(false);
+      root.classList.toggle('full', on);
+      document.body.classList.toggle('tc-lock', on);
+      fullCard = on ? setFull : null;
+      st.full = on; save();
+      var b = root.querySelector('[data-t="full"]');
+      b.setAttribute('aria-pressed', on); b.textContent = on ? '✕ Close' : '⤢ Expand';
+      sizePanes();
+      if (on) { root.scrollTop = 0; b.focus(); } else root.scrollIntoView({block: 'nearest'});
+    }
+    root._close = function () { if (root.classList.contains('full')) setFull(false); };
+    function sync() {
+      root.querySelectorAll('.seg[data-g]').forEach(function (g) {
+        var cur = st[g.dataset.g];
+        g.querySelectorAll('button').forEach(function (b) { if (cur != null) b.setAttribute('aria-pressed', b.dataset.v === cur); });
+      });
+      root.querySelector('[data-t="log"]').setAttribute('aria-pressed', st.log);
+    }
+
+    root.querySelectorAll('.seg[data-g] button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var g = b.parentNode.dataset.g, v = b.dataset.v;
+        if (g === 'range') { st.range = v; st.lr = null; save(); applyRange(); }
+        else if (g === 'iv') setInterval_(v);
+        else if (g === 'pnl') { st.pnl = v; save(); setPnl(); sync(); readout(null); }
+        else if (g === 'zoom') { if (v === 'reset') snap(); else zoom(v === 'in' ? 0.6 : 1 / 0.6); }
+      });
+    });
+    root.querySelector('[data-t="log"]').addEventListener('click', function () { setLog(!st.log); });
+    root.querySelector('[data-t="full"]').addEventListener('click', function () { setFull(!root.classList.contains('full')); });
+    panesEl.addEventListener('dblclick', snap);
+    window.addEventListener('resize', function () { if (root.classList.contains('full')) sizePanes(); });
+
+    // Sync pan/zoom across panes; a drag or scroll by the user becomes a
+    // custom range that survives the 60s auto-refresh.
     charts.forEach(function (src) {
       src.timeScale().subscribeVisibleLogicalRangeChange(function (r) {
         if (syncing || !r) return;
         syncing = true;
         charts.forEach(function (dst) { if (dst !== src) dst.timeScale().setVisibleLogicalRange(r); });
         syncing = false;
-        store(key, JSON.stringify(r));
+        if (dragging || Date.now() - wheelT < 600) {
+          st.range = 'custom'; st.lr = {from: r.from, to: r.to}; save(); sync();
+        }
       });
     });
-    var saved = load(key);
-    if (saved) { try { price.timeScale().setVisibleLogicalRange(JSON.parse(saved)); } catch (e) {} }
-    else { price.timeScale().setVisibleLogicalRange({from: Math.max(0, dates.length - (narrow ? 70 : 130)), to: dates.length + 2}); }
 
-    // Hover readout: OHLC + every overlay value on the hovered bar.
+    // Hover readout: OHLC, change on the bar, every overlay value, P&L.
     var ohlc = root.querySelector('.tc-ohlc');
     function readout(t) {
-      var i = t ? dates.indexOf(t) : dates.length - 1;
-      if (i < 0) i = dates.length - 1;
-      var b = c.candles[i], html = '<b>' + esc(b.time) + '</b> &nbsp;O ' + fmt(b.open) + ' H ' + fmt(b.high) + ' L ' + fmt(b.low) + ' C <b>' + fmt(b.close) + '</b>';
-      c.overlays.forEach(function (o) {
-        var p = null; for (var k = 0; k < o.points.length; k++) { if (o.points[k].time === b.time) { p = o.points[k]; break; } }
-        if (p) html += ' &nbsp;·&nbsp; ' + esc(o.label) + ' ' + fmt(p.value);
-      });
-      for (var k = 0; k < c.pnl.length; k++) if (c.pnl[k].time === b.time) { html += ' &nbsp;·&nbsp; P&amp;L <b>' + fmt(c.pnl[k].value) + '</b>'; break; }
+      var d = V.dates, i = t ? d.indexOf(t) : d.length - 1;
+      if (i < 0) i = d.length - 1;
+      var b = V.candles[i];
+      if (!b) return;
+      var chg = i > 0 ? (b.close / V.candles[i - 1].close - 1) * 100 : null;
+      var html = '<b>' + (st.iv === 'W' ? 'Week of ' : '') + esc(b.time) + '</b> &nbsp;O ' + fmt(b.open) + ' H ' + fmt(b.high) + ' L ' + fmt(b.low) + ' C <b>' + fmt(b.close) + '</b>' +
+        (chg != null ? ' <span class="' + cls(chg) + '">' + pct(chg) + '</span>' : '');
+      c.overlays.forEach(function (o, k) { var p = V.ovMaps[k][b.time]; if (p) html += ' &nbsp;·&nbsp; ' + esc(o.label) + ' ' + fmt(p.value); });
+      var q = V.pnlMap[b.time];
+      if (q) html += ' &nbsp;·&nbsp; P&amp;L <b class="' + cls(q.value) + '">' + money(q.value, true) + '</b>' + (q.pct != null ? ' <span class="' + cls(q.pct) + '">' + pct(q.pct) + '</span>' : '');
       ohlc.innerHTML = html;
     }
-    readout(null);
-    charts.forEach(function (src) {
+    charts.forEach(function (src, si) {
       src.subscribeCrosshairMove(function (param) {
         readout(param && param.time ? param.time : null);
         if (syncing) return;
         syncing = true;
         charts.forEach(function (dst, j) {
           if (dst === src || !dst.setCrosshairPosition) return;
-          if (param && param.time) dst.setCrosshairPosition(NaN, param.time, prim[j]);
+          if (param && param.time) dst.setCrosshairPosition(NaN, param.time, prim[j]());
           else dst.clearCrosshairPosition();
         });
         syncing = false;
@@ -970,6 +1223,63 @@ details.closed > .tc{margin-top:0;border-radius:0 0 10px 10px;border-top:0}
         ovSeries[+btn.dataset.ov].applyOptions({visible: on});
       });
     });
+
+    sizePanes();
+    setData();
+    if (st.log) setLog(true);
+    applyRange();
+    readout(null);
+    if (st.full) setFull(true);
+  }
+
+  // ------------------------------------------------------------ open book P&L
+  function drawBook() {
+    var host = document.getElementById('at-book');
+    var cards = A.open.filter(function (c) { return c.pnl && c.pnl.length; });
+    if (!host || host.dataset.drawn || cards.length < 2) return;
+    host.dataset.drawn = '1';
+    var all = {};
+    cards.forEach(function (c) { c.pnl.forEach(function (p) { all[p.time] = 1; }); });
+    var dates = Object.keys(all).sort();
+    var lines = cards.map(function (c) {
+      var m = toMap(c.pnl), last = null, out = [];
+      dates.forEach(function (d) { if (m[d]) last = m[d].value; out.push({time: d, value: last == null ? 0 : last}); });
+      return out;
+    });
+    var total = dates.map(function (d, i) { return {time: d, value: Math.round(lines.reduce(function (s, l) { return s + l[i].value; }, 0) * 100) / 100}; });
+    var now = total[total.length - 1].value, best = total.reduce(function (a, b) { return b.value > a.value ? b : a; });
+    var pills = cards.map(function (c, i) {
+      var v = c.pnl[c.pnl.length - 1].value;
+      return '<a href="#' + c.id + '" data-jump="' + c.id + '"><i style="background:' + BOOK_COLORS[i % BOOK_COLORS.length] + '"></i>' + esc(c.title) +
+        ' <span class="' + cls(v) + '">' + money(v, true) + '</span></a>';
+    }).join('');
+    host.innerHTML = '<div class="card book"><div class="book-hdr"><div><div class="eyebrow">Open book P&amp;L</div>' +
+      '<div class="tc-sub">every open position, incl. costs · click a position to jump to its chart</div></div>' +
+      '<div class="tc-pnl"><div class="l">Combined now</div><div class="v ' + cls(now) + '">' + money(now, true) + '</div>' +
+      '<div class="p mut">best ' + money(best.value, true) + ' · ' + shortDate(best.time) + '</div></div></div>' +
+      '<div class="book-pills">' + pills + '</div><div class="tc-ohlc"></div><div class="panes"><div class="pane"></div></div></div>';
+    host.querySelectorAll('a[data-jump]').forEach(function (a) {
+      a.addEventListener('click', function (e) { e.preventDefault(); var el = document.getElementById(a.dataset.jump); if (el) el.scrollIntoView({behavior: 'smooth', block: 'start'}); });
+    });
+    var ch = mkChart(host.querySelector('.pane'), 200);
+    var tot = ch.addBaselineSeries({baseValue: {type: 'price', price: 0}, lineWidth: 3,
+      topLineColor: C.up, topFillColor1: 'rgba(127,191,127,.22)', topFillColor2: 'rgba(127,191,127,.03)',
+      bottomLineColor: C.dn, bottomFillColor1: 'rgba(201,122,122,.03)', bottomFillColor2: 'rgba(201,122,122,.22)',
+      priceLineVisible: false, priceFormat: USD, title: 'total'});
+    tot.setData(total);
+    lines.forEach(function (l, i) {
+      ch.addLineSeries({color: BOOK_COLORS[i % BOOK_COLORS.length], lineWidth: 1, priceLineVisible: false, lastValueVisible: false,
+                        crosshairMarkerVisible: false, priceFormat: USD}).setData(l);
+    });
+    ch.timeScale().fitContent();
+    var ro = host.querySelector('.tc-ohlc');
+    function rd(t) {
+      var i = t ? dates.indexOf(t) : dates.length - 1; if (i < 0) i = dates.length - 1;
+      ro.innerHTML = '<b>' + esc(dates[i]) + '</b> &nbsp;Total <b class="' + cls(total[i].value) + '">' + money(total[i].value, true) + '</b>' +
+        cards.map(function (c, k) { return ' &nbsp;·&nbsp; ' + esc(c.title) + ' <span class="' + cls(lines[k][i].value) + '">' + money(lines[k][i].value, true) + '</span>'; }).join('');
+    }
+    rd(null);
+    ch.subscribeCrosshairMove(function (p) { rd(p && p.time ? p.time : null); });
   }
 
   var openHost = document.getElementById('at-open');
@@ -988,9 +1298,10 @@ details.closed > .tc{margin-top:0;border-radius:0 0 10px 10px;border-top:0}
       });
     });
   }
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && fullCard) fullCard(false); });
 
   // Draw open cards when the tab is first shown (charts need a laid-out width).
-  function drawOpen() { A.open.forEach(draw); }
+  function drawOpen() { drawBook(); A.open.forEach(draw); }
   var page = document.getElementById('p-active');
   if (page && page.classList.contains('active')) drawOpen();
   document.querySelectorAll('.tab[data-tab="active"]').forEach(function (t) { t.addEventListener('click', function () { setTimeout(drawOpen, 0); }); });

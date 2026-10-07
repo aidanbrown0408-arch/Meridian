@@ -41,8 +41,9 @@ from utils.market_calendar import expected_last_bar as _expected_last_bar
 
 log = get_logger("trade_charts", agent="George")
 
-MIN_BARS_SHOWN = 130      # ~6 months of sessions on screen at minimum
+MIN_BARS_SHOWN = 130      # ~6 months of sessions in the default "Trade" view
 PAD_BEFORE_ENTRY = 60     # sessions of context before the first fill
+MAX_HISTORY_BARS = 756    # ~3 years shipped per card so 1Y / All / weekly views have data
 MAX_CLOSED_CARDS = 12     # most recent closed trades kept on the page
 PRICE_MATCH_TOL = 5e-4    # 0.05%: a fill "matches" a bar's close within this
 
@@ -324,13 +325,36 @@ def _episodes(trades: list, min_dollars: float) -> list[list]:
 
 
 def _window_start(bars: pd.DataFrame, first_bar: str, last_bar: str | None = None):
+    """(start, end, focus_from, focus_to). start..end is everything the card
+    ships (up to MAX_HISTORY_BARS); focus_from..focus_to is the trade-centred
+    window the chart opens on (the "Trade" range button)."""
     idx = list(bars.index)
     dates = [_d(t) for t in idx]
     i = dates.index(first_bar) if first_bar in dates else 0
     j = dates.index(last_bar) if last_bar and last_bar in dates else len(dates) - 1
-    start = max(0, min(i - PAD_BEFORE_ENTRY, j - MIN_BARS_SHOWN + 1))
+    focus = max(0, min(i - PAD_BEFORE_ENTRY, j - MIN_BARS_SHOWN + 1))
     end = min(len(dates) - 1, j + (15 if last_bar else 0))
-    return idx[start], idx[end]
+    start = min(focus, max(0, end - MAX_HISTORY_BARS + 1))
+    return idx[start], idx[end], dates[focus], dates[end]
+
+
+def _pnl_stats(pnl: list[dict]) -> dict | None:
+    """Current / best / worst / giveback / last change from a P&L series."""
+    if not pnl:
+        return None
+    vals = [p["value"] for p in pnl]
+    hi = max(range(len(vals)), key=lambda k: vals[k])
+    lo = min(range(len(vals)), key=lambda k: vals[k])
+    cur = pnl[-1]
+    out = {"current": cur["value"], "current_pct": cur.get("pct"),
+           "peak": vals[hi], "peak_time": pnl[hi]["time"], "peak_pct": pnl[hi].get("pct"),
+           "trough": vals[lo], "trough_time": pnl[lo]["time"], "trough_pct": pnl[lo].get("pct"),
+           "giveback": round(vals[hi] - cur["value"], 2) if vals[hi] > 0 else 0.0,
+           "change": None, "change_time": None, "points": len(pnl)}
+    if len(pnl) > 1:
+        out["change"] = round(vals[-1] - vals[-2], 2)
+        out["change_time"] = pnl[-2]["time"]
+    return out
 
 
 def _candles(bars: pd.DataFrame) -> list[dict]:
@@ -444,7 +468,7 @@ def _stock_card(ctx: _Ctx, symbol: str, trades: list, position, open_: bool,
 
     first_bar = fills[0][1]
     last_bar = None if open_ else fills[-1][1]
-    start, end = _window_start(bars, first_bar, last_bar)
+    start, end, focus_from, focus_to = _window_start(bars, first_bar, last_bar)
     view = bars.loc[start:end]
 
     # Who the position is held for.
@@ -468,7 +492,7 @@ def _stock_card(ctx: _Ctx, symbol: str, trades: list, position, open_: bool,
     # Fill markers + P&L replay (cash out vs. market value, costs included).
     markers = list(sig_markers)
     notes = []
-    flows = {}
+    flows: dict[str, list] = {}
     for t, bar_date, note in fills:
         buy = t.side == "buy"
         markers.append({"time": bar_date, "position": "belowBar" if buy else "aboveBar",
@@ -477,17 +501,28 @@ def _stock_card(ctx: _Ctx, symbol: str, trades: list, position, open_: bool,
                         "text": f"{'BUY' if buy else 'SELL'} {t.shares:.4g} @ {_money(t.price)}"})
         if note:
             notes.append(f"{'Buy' if buy else 'Sell'} {_pretty_date(str(t.date)[:10])}: {note}.")
-        f = flows.setdefault(bar_date, [0.0, 0.0])
-        f[0] += t.shares if buy else -t.shares
-        f[1] += (t.shares * t.price + t.cost) if buy else -(t.shares * t.price - t.cost)
+        flows.setdefault(bar_date, []).append(t)
 
-    pnl, shares, invested = [], 0.0, 0.0
+    # P&L replay: market value minus net cash put in (costs included). The %
+    # is against the most capital the episode ever had deployed (cost basis of
+    # shares held, at its peak), so a trim doesn't inflate the percentage.
+    pnl, shares, invested, basis, peak_basis = [], 0.0, 0.0, 0.0, 0.0
     for ts, row in bars.loc[first_bar:(last_bar or bars.index[-1])].iterrows():
         d = _d(ts)
-        if d in flows:
-            shares += flows[d][0]
-            invested += flows[d][1]
-        pnl.append({"time": d, "value": round(shares * float(row["close"]) - invested, 2)})
+        for t in flows.get(d, []):
+            if t.side == "buy":
+                basis += t.shares * t.price + t.cost
+                shares += t.shares
+                invested += t.shares * t.price + t.cost
+            else:
+                if shares > 0:
+                    basis -= basis * min(1.0, t.shares / shares)
+                shares -= t.shares
+                invested -= t.shares * t.price - t.cost
+            peak_basis = max(peak_basis, basis)
+        value = shares * float(row["close"]) - invested
+        pnl.append({"time": d, "value": round(value, 2),
+                    "pct": round(value / peak_basis * 100, 2) if peak_basis else None})
     # A closed episode's last bar is fully realized: shares ~0.
     markers.sort(key=lambda m: m["time"])
 
@@ -557,7 +592,9 @@ def _stock_card(ctx: _Ctx, symbol: str, trades: list, position, open_: bool,
         "data": ds, "headline": headline, "stats": [{"label": k, "value": v} for k, v in stats],
         "candles": _candles(view), "overlays": overlays, "panes": panes,
         "markers": markers, "price_lines": price_lines,
-        "pnl": pnl, "pnl_label": "Position P&L incl. costs ($)",
+        "pnl": pnl, "pnl_label": "Position P&L incl. costs",
+        "pnl_basis": "% of peak capital deployed",
+        "pnl_stats": _pnl_stats(pnl), "focus": {"from": focus_from, "to": focus_to},
         "notes": notes, "sort_date": last_bar or first_bar,
     }
 
@@ -622,7 +659,7 @@ def _option_card(ctx: _Ctx, key: str, pos_like: dict, trades: list, open_: bool,
     last = None
     if not open_ and close_t:
         last = _bar_for_fill(bars, str(close_t[-1].date)[:10], float("nan"))[0]
-    start, end = _window_start(bars, first, last)
+    start, end, focus_from, focus_to = _window_start(bars, first, last)
     view = bars.loc[start:end]
 
     trigger, is_put = _trigger_of(pos_like.get("reason", "") or
@@ -656,7 +693,10 @@ def _option_card(ctx: _Ctx, key: str, pos_like: dict, trades: list, open_: bool,
     notes = []
     contracts = int(pos_like["contracts"])
     paid = float(pos_like["premium_paid"])
-    pnl = [{"time": m["date"], "value": round(contracts * float(m["premium"]) - paid, 2)}
+    def _pt(t, v):
+        return {"time": t, "value": round(v, 2), "pct": round(v / paid * 100, 2) if paid else None}
+
+    pnl = [_pt(m["date"], contracts * float(m["premium"]) - paid)
            for m in pos_like.get("marks", []) or [] if m.get("premium") is not None]
     if open_:
         exp = date.fromisoformat(pos_like["expiration"])
@@ -694,7 +734,7 @@ def _option_card(ctx: _Ctx, key: str, pos_like: dict, trades: list, open_: bool,
                   if close_t else "—")]
         if open_t and close_t:
             pnl = pnl or []
-            pnl.append({"time": str(close_t[-1].date)[:10], "value": round(realized, 2)})
+            pnl.append(_pt(str(close_t[-1].date)[:10], realized))
     if not trigger:
         notes.insert(0, "Couldn't tell which trigger opened this contract from its ledger "
                         "reason, so no strategy overlay is drawn.")
@@ -714,7 +754,10 @@ def _option_card(ctx: _Ctx, key: str, pos_like: dict, trades: list, open_: bool,
         "data": ds, "headline": headline, "stats": [{"label": k, "value": v} for k, v in stats],
         "candles": _candles(view), "overlays": overlays, "panes": panes,
         "markers": markers, "price_lines": price_lines,
-        "pnl": sorted(pnl, key=lambda p: p["time"]), "pnl_label": "Contract P&L ($, from daily marks)",
+        "pnl": sorted(pnl, key=lambda p: p["time"]), "pnl_label": "Contract P&L (daily marks)",
+        "pnl_basis": "% of premium paid",
+        "pnl_stats": _pnl_stats(sorted(pnl, key=lambda p: p["time"])),
+        "focus": {"from": focus_from, "to": focus_to},
         "notes": notes, "sort_date": last or first,
     }
 

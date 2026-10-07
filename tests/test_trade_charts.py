@@ -158,6 +158,41 @@ def test_stock_card_reconciles_to_the_ledger_to_the_cent():
     assert card["overlays"] and card["overlays"][0]["label"].startswith("SPARK")
 
 
+def test_card_ships_long_history_and_a_trade_focus_window():
+    broker = _tmp_broker()
+    bars = _walk(12, n=900)
+    broker.execute(_market(bars.iloc[:-20]), {"TEST": NettedPosition("TEST", 0.4, False, ["SPARK"])})
+    ledger = broker.load_ledger()
+    card = build_stock_charts(CONFIG, _market(bars), ledger)["open"][0]
+    dates = [c["time"] for c in card["candles"]]
+    # Enough history for the 1Y / All range buttons and a weekly view...
+    assert len(dates) == 756 and dates[-1] == bars.index[-1].date().isoformat()
+    # ...while the chart still opens on the trade: 60 sessions before the buy.
+    entry = bars.index[-21].date().isoformat()
+    assert card["focus"]["to"] == dates[-1]
+    assert dates.index(entry) - dates.index(card["focus"]["from"]) == 109  # 130-bar minimum wins
+    # Overlays cover the whole shipped window once warmed up.
+    assert card["overlays"][0]["points"][0]["time"] >= dates[0]
+
+
+def test_pnl_percent_and_stats_track_the_replay():
+    broker = _tmp_broker()
+    bars = _walk(13)
+    broker.execute(_market(bars.iloc[:-30]), {"TEST": NettedPosition("TEST", 0.4, False, ["SPARK"])})
+    ledger = broker.load_ledger()
+    card = build_stock_charts(CONFIG, _market(bars), ledger)["open"][0]
+    pnl = card["pnl"]
+    buy = ledger.trades[0]
+    basis = buy.shares * buy.price + buy.cost
+    for p in pnl:
+        assert abs(p["pct"] - p["value"] / basis * 100) < 0.011
+    st = card["pnl_stats"]
+    vals = [p["value"] for p in pnl]
+    assert st["current"] == vals[-1] and st["peak"] == max(vals) and st["trough"] == min(vals)
+    assert st["change"] == round(vals[-1] - vals[-2], 2)
+    assert st["giveback"] == (round(max(vals) - vals[-1], 2) if max(vals) > 0 else 0.0)
+
+
 def test_closed_trade_card_shows_realized_pnl_after_costs():
     broker = _tmp_broker()
     bars = _walk(10)
@@ -242,7 +277,8 @@ def test_options_marks_build_a_pnl_line_and_a_card():
     assert card["traders"][0]["callsign"] == "SPARK"
     assert card["price_lines"][0]["price"] == 500.0
     assert card["price_lines"][1]["price"] == 501.2      # strike + $1.20/share premium
-    assert card["pnl"] == [{"time": card["pnl"][0]["time"], "value": 30.0}]
+    assert card["pnl"] == [{"time": card["pnl"][0]["time"], "value": 30.0, "pct": 25.0}]
+    assert card["pnl_stats"]["current"] == 30.0 and card["pnl_stats"]["change"] is None
 
     ledger = broker.close(key, 90.0, reason="manual close")
     out = build_options_charts(CONFIG, market, ledger)

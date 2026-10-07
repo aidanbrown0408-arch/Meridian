@@ -226,6 +226,15 @@ Cornelius now records `traders` and `bar_date` on every fill, and Joseph records
 quoted mark per day on each open contract, so attribution and option P&L history are
 on record rather than inferred.
 
+Each card ships up to ~3 years of bars and opens framed on the trade. Its toolbar has
+range presets (Trade / 1M / 3M / 6M / 1Y / All), daily or weekly candles (weekly
+indicator values are each week's close), zoom − / + / Reset, a log price scale, and a
+full-screen view (Esc closes). The P&L pane switches between dollars, percent (of peak
+capital deployed for stock, of premium paid for options) and change per bar, and a strip
+above the chart shows P&L now, best, worst and how much has been given back from the
+best. With two or more open positions, an "Open book P&L" chart at the top of the tab
+combines them. View settings are remembered per card across the 60-second refresh.
+
 **Stale feeds are blocked, not traded.** From 9/30 to 10/05 every 8:15 PM run decided
 and filled on the *previous* session's close: Wong asked yfinance for history without an
 end date and got bars only through yesterday, and David's 3-day staleness rule let one
