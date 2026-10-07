@@ -739,7 +739,7 @@ details.closed > .tc.full{border-radius:0}
       t.setAttribute('aria-selected', on);
     });
     store(KEY, id);
-    if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
+    if (location.hash !== '#' + id) { try { history.replaceState(null, '', '#' + id); } catch (e) { /* sandboxed previews block URL changes */ } }
   }
   tabs.forEach(function (t) { t.addEventListener('click', function () { show(t.dataset.tab); window.scrollTo(0, 0); }); });
   window.addEventListener('hashchange', function () { show(location.hash.slice(1)); });
