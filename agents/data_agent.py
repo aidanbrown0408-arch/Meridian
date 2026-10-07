@@ -61,6 +61,26 @@ class MarketData:
                 f"source={self.data_source}>")
 
 
+def _as_exchange_time(stamp) -> pd.Timestamp | None:
+    """yfinance versions differ: regularMarketTime arrives as epoch seconds
+    (int/float/str) or already as a Timestamp/datetime. Returns it in Eastern
+    time, or None if it can't be read (the caller then uses the last 5-min
+    close instead of failing)."""
+    if stamp is None or stamp == "":
+        return None
+    try:
+        if isinstance(stamp, (int, float, np.integer, np.floating)) or (
+                isinstance(stamp, str) and stamp.strip().lstrip("-").isdigit()):
+            ts = pd.Timestamp(int(float(stamp)), unit="s", tz="UTC")
+        else:
+            ts = pd.Timestamp(stamp)
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+        return ts.tz_convert("America/New_York")
+    except Exception:
+        return None
+
+
 class DataAgent:
     """Wong."""
 
@@ -334,9 +354,9 @@ class DataAgent:
         close = float(day[cols["close"]].iloc[-1])
         volume = float(day[cols["volume"]].sum()) if "volume" in cols else np.nan
         source = "last 5-min bar"
-        price, stamp = meta.get("regularMarketPrice"), meta.get("regularMarketTime")
-        if price and stamp:
-            stamp_et = pd.Timestamp(int(stamp), unit="s", tz="UTC").tz_convert("America/New_York")
+        price = meta.get("regularMarketPrice")
+        stamp_et = _as_exchange_time(meta.get("regularMarketTime"))
+        if price and stamp_et is not None:
             if stamp_et.date() == session and (stamp_et.hour, stamp_et.minute) >= (16, 0):
                 close = float(price)
                 source = "official close"

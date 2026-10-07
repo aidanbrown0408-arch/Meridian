@@ -283,3 +283,24 @@ def test_only_a_single_missing_session_is_ever_filled(monkeypatch):
     wed = datetime(2026, 10, 8, 0, 15, tzinfo=UTC)      # 2 sessions behind 10/05
     md = _wong_at(monkeypatch, wed).fetch("AAPL")
     assert md.bars.index[-1].date() == date(2026, 10, 5)
+
+
+@pytest.mark.parametrize("stamp", [
+    _stamp("2026-10-06 16:00"),                                         # epoch int
+    float(_stamp("2026-10-06 16:00")),                                  # epoch float
+    str(_stamp("2026-10-06 16:00")),                                    # epoch str
+    pd.Timestamp("2026-10-06 16:00", tz="America/New_York"),            # Timestamp (yfinance on the Mac)
+    pd.Timestamp("2026-10-06 20:00", tz="UTC").to_pydatetime(),         # aware datetime
+])
+def test_official_close_used_whatever_type_yfinance_returns(monkeypatch, stamp):
+    meta = {"regularMarketPrice": 101.37, "regularMarketTime": stamp}
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(_intraday("2026-10-06"), meta))
+    md = _wong_at(monkeypatch, TUE_8_15PM).fetch("AAPL")
+    assert md.bars["close"].iloc[-1] == 101.37
+
+
+def test_unreadable_quote_time_falls_back_instead_of_failing(monkeypatch):
+    meta = {"regularMarketPrice": 101.37, "regularMarketTime": object()}
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(_intraday("2026-10-06", close=102.0), meta))
+    md = _wong_at(monkeypatch, TUE_8_15PM).fetch("AAPL")
+    assert md.bars.index[-1].date() == date(2026, 10, 6) and md.bars["close"].iloc[-1] == 102.0
