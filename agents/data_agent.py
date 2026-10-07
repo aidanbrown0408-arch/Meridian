@@ -133,6 +133,11 @@ class DataAgent:
             log.info("Fetched %s: %d bars (%s), last %s",
                      symbol, len(bars), source, bars.index[-1].date())
             notes = []
+            if asset_class != "crypto" and source == self.config.get("data.stock_source") \
+                    and self._behind(symbol, asset_class, bars, source):
+                bars, note = self._complete_latest_session(symbol, bars)
+                if note:
+                    notes.append(note)
             if self._behind(symbol, asset_class, bars, source):
                 notes.append("feed is behind the latest completed session")
             return MarketData(symbol, asset_class, bars, source,
@@ -257,6 +262,92 @@ class DataAgent:
                     "candle" if asset_class == "crypto" else "session", missing,
                     " -- refetching" if source == "cache" else "")
         return True
+
+    def _complete_latest_session(self, symbol: str, bars: pd.DataFrame,
+                                 now: datetime | None = None) -> tuple[pd.DataFrame, str]:
+        """Yahoo's *daily* history publishes a session's bar hours after the
+        close (Mon 10/05's bar was missing at 8:15 PM, present by 11:11 PM;
+        Tue 10/06's was missing at 8:15 PM). Its *intraday* data and live
+        quote have the session immediately. When exactly the newest
+        completed session is missing, build that one bar from them:
+        open/high/low from the 5-minute regular-hours bars, close and volume
+        from Yahoo's official regular-market close in the quote metadata.
+
+        Only ever fills the single missing session, and only when the
+        intraday data runs to the 4:00 PM close and the quote is stamped at or
+        after the close on that same date -- otherwise nothing is added and
+        David blocks the ticker as stale. Returns (bars, note)."""
+        if bars.empty or not self.config.get("data.complete_latest_session", True):
+            return bars, ""
+        expected = expected_last_bar("stocks", self.config, now)
+        last = bars.index[-1].date()
+        if sessions_between(last, expected, "stocks", self.config) != 1:
+            return bars, ""
+        try:
+            bar, detail = self._session_bar_from_intraday(symbol, expected)
+        except Exception as exc:
+            log.warning("%s: couldn't build the %s bar from intraday data (%s)",
+                        symbol, expected, exc)
+            return bars, ""
+        if bar is None:
+            log.warning("%s: %s bar not available from intraday data either (%s)",
+                        symbol, expected, detail)
+            return bars, ""
+        log.info("%s: %s bar built from Yahoo intraday + official close (%s) -- daily "
+                 "history hasn't published it yet", symbol, expected, detail)
+        out = pd.concat([bars, bar])
+        out = out[~out.index.duplicated(keep="last")].sort_index()
+        return out, (f"{expected} bar built from Yahoo intraday data + official close "
+                     f"(daily history not published yet)")
+
+    @staticmethod
+    def _session_bar_from_intraday(symbol: str, session) -> tuple[pd.DataFrame | None, str]:
+        import yfinance as yf
+
+        ticker = yf.Ticker(symbol)
+        intraday = ticker.history(period="5d", interval="5m", prepost=False,
+                                  auto_adjust=True)
+        if intraday is None or intraday.empty:
+            return None, "no intraday bars"
+        idx = intraday.index
+        if getattr(idx, "tz", None) is None:
+            idx = idx.tz_localize("UTC")
+        idx = idx.tz_convert("America/New_York")
+        intraday = intraday.set_axis(idx)
+        cols = {c.lower(): c for c in intraday.columns}
+        day = intraday[[d == session for d in idx.date]]
+        if day.empty:
+            return None, f"no intraday bars dated {session}"
+        last_start = day.index[-1]
+        if (last_start.hour, last_start.minute) < (15, 55):
+            return None, f"intraday stops at {last_start:%H:%M} ET, before the close"
+
+        meta = {}
+        for getter in ("get_history_metadata", "history_metadata"):
+            try:
+                attr = getattr(ticker, getter, None)
+                meta = (attr() if callable(attr) else attr) or {}
+                if meta:
+                    break
+            except Exception:
+                meta = {}
+        close = float(day[cols["close"]].iloc[-1])
+        volume = float(day[cols["volume"]].sum()) if "volume" in cols else np.nan
+        source = "last 5-min bar"
+        price, stamp = meta.get("regularMarketPrice"), meta.get("regularMarketTime")
+        if price and stamp:
+            stamp_et = pd.Timestamp(int(stamp), unit="s", tz="UTC").tz_convert("America/New_York")
+            if stamp_et.date() == session and (stamp_et.hour, stamp_et.minute) >= (16, 0):
+                close = float(price)
+                source = "official close"
+                if meta.get("regularMarketVolume"):
+                    volume = float(meta["regularMarketVolume"])
+        high = max(float(day[cols["high"]].max()), close)
+        low = min(float(day[cols["low"]].min()), close)
+        bar = pd.DataFrame({"open": [float(day[cols["open"]].iloc[0])], "high": [high],
+                            "low": [low], "close": [close], "volume": [volume]},
+                           index=pd.DatetimeIndex([pd.Timestamp(session)]))
+        return bar.astype("float64"), f"close {close:.2f} from {source}"
 
     def _drop_open_stock_bar(self, symbol: str, bars: pd.DataFrame,
                              now: datetime | None = None) -> pd.DataFrame:

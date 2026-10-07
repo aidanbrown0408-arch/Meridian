@@ -38,6 +38,11 @@ data:
   # If a real source fails, Wong generates a seeded random walk instead so the
   # pipeline never hard-fails. Everything downstream is flagged synthetic.
   allow_synthetic_fallback: true
+  # Yahoo's daily history publishes a session's bar hours after the close
+  # (missing at the 8:15 PM run on 10/05 and 10/06). When only the newest
+  # session is missing, Wong builds it from Yahoo's intraday bars + official
+  # close. Off = wait for the daily bar (David blocks the ticker meanwhile).
+  complete_latest_session: true
   synthetic_seed: 20240101
   synthetic:
     start_price:

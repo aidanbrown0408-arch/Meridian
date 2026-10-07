@@ -180,3 +180,106 @@ def test_data_alert_posts_once_as_urgent(monkeypatch):
     assert len(sent) == 1 and "AAPL, MSFT" in sent[0]
     assert "data_alerts" in n.URGENT
     assert n.data_alert({}) is False
+
+
+# ------------------------------------------------------------------ completing the latest session
+# Yahoo's daily history publishes a session hours after the close (missing at
+# 8:15 PM on 10/05 and 10/06); intraday + quote have it immediately.
+
+TUE_8_15PM = datetime(2026, 10, 7, 0, 15, tzinfo=UTC)
+
+
+def _intraday(session: str, last_start: str = "15:55", close: float = 101.0) -> pd.DataFrame:
+    idx = pd.date_range(f"{session} 09:30", f"{session} {last_start}", freq="5min",
+                        tz="America/New_York")
+    n = len(idx)
+    px = np.linspace(100.0, close, n)
+    return pd.DataFrame({"Open": px, "High": px + 0.5, "Low": px - 0.5, "Close": px,
+                         "Volume": np.full(n, 1000.0)}, index=idx)
+
+
+def _fake_yf(intraday, meta):
+    import types
+
+    class T:
+        def __init__(self, symbol):
+            pass
+
+        def history(self, **kw):
+            if kw.get("interval") == "5m":
+                return intraday
+            bars = _bars("2026-10-05")
+            bars.columns = [c.capitalize() for c in bars.columns]
+            return bars
+
+        def get_history_metadata(self):
+            return meta
+    return types.SimpleNamespace(Ticker=T)
+
+
+def _stamp(s):
+    return int(pd.Timestamp(s, tz="America/New_York").timestamp())
+
+
+def _wong_at(monkeypatch, now):
+    monkeypatch.setattr("agents.data_agent.expected_last_bar",
+                        lambda a, c=None, n=None: expected_last_bar(a, c, now))
+    w = DataAgent(CONFIG)
+    w.use_cache = False
+    monkeypatch.setattr(w, "_drop_open_stock_bar", lambda s, b, now=None: b)
+    return w
+
+
+def test_missing_session_built_from_intraday_and_official_close(monkeypatch):
+    meta = {"regularMarketPrice": 101.37, "regularMarketTime": _stamp("2026-10-06 16:00"),
+            "regularMarketVolume": 55_000_000}
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(_intraday("2026-10-06"), meta))
+    md = _wong_at(monkeypatch, TUE_8_15PM).fetch("AAPL")
+    last = md.bars.iloc[-1]
+    assert md.bars.index[-1].date() == date(2026, 10, 6)
+    assert last["close"] == 101.37 and last["volume"] == 55_000_000
+    assert last["open"] == 100.0 and last["high"] >= 101.37 and last["low"] <= last["open"]
+    assert any("built from Yahoo intraday" in n for n in md.notes)
+    d = _david(TUE_8_15PM)
+    assert not d.check(md).blocked, "a completed session must clear David"
+
+
+def test_quote_from_another_day_falls_back_to_last_intraday_close(monkeypatch):
+    meta = {"regularMarketPrice": 999.0, "regularMarketTime": _stamp("2026-10-05 16:00")}
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(_intraday("2026-10-06", close=102.0), meta))
+    md = _wong_at(monkeypatch, TUE_8_15PM).fetch("AAPL")
+    assert md.bars["close"].iloc[-1] == 102.0
+
+
+def test_intraday_that_stops_before_the_close_adds_nothing(monkeypatch):
+    monkeypatch.setitem(sys.modules, "yfinance",
+                        _fake_yf(_intraday("2026-10-06", last_start="14:00"), {}))
+    md = _wong_at(monkeypatch, TUE_8_15PM).fetch("AAPL")
+    assert md.bars.index[-1].date() == date(2026, 10, 5)
+    assert _david(TUE_8_15PM).check(md).blocked
+
+
+def test_intraday_failure_leaves_the_block_in_place(monkeypatch):
+    import types
+
+    class Boom:
+        def __init__(self, s):
+            pass
+
+        def history(self, **kw):
+            if kw.get("interval") == "5m":
+                raise RuntimeError("yahoo down")
+            b = _bars("2026-10-05")
+            b.columns = [c.capitalize() for c in b.columns]
+            return b
+    monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(Ticker=Boom))
+    md = _wong_at(monkeypatch, TUE_8_15PM).fetch("AAPL")
+    assert md.bars.index[-1].date() == date(2026, 10, 5) and md.data_source == "yfinance"
+    assert _david(TUE_8_15PM).check(md).blocked
+
+
+def test_only_a_single_missing_session_is_ever_filled(monkeypatch):
+    monkeypatch.setitem(sys.modules, "yfinance", _fake_yf(_intraday("2026-10-07"), {}))
+    wed = datetime(2026, 10, 8, 0, 15, tzinfo=UTC)      # 2 sessions behind 10/05
+    md = _wong_at(monkeypatch, wed).fetch("AAPL")
+    assert md.bars.index[-1].date() == date(2026, 10, 5)

@@ -125,8 +125,9 @@ def data_status(md, config=None, now: datetime | None = None) -> dict:
                 f"{_pretty_date(expected.isoformat())} "
                 f"{'candle' if md.asset_class == 'crypto' else 'close'} isn't in this "
                 f"run's data — David blocks trading on it until it catches up.")
+    built = next((n for n in (md.notes or []) if "built from Yahoo intraday" in n), "")
     return {"through": last.isoformat(), "expected": expected.isoformat(),
-            "stale": bool(stale), "stale_note": note,
+            "stale": bool(stale), "stale_note": note, "built_note": built,
             "source": md.data_source, "synthetic": bool(md.is_synthetic)}
 
 
@@ -541,6 +542,8 @@ def _stock_card(ctx: _Ctx, symbol: str, trades: list, position, open_: bool,
     ds = data_status(md, ctx.config, ctx.now)
     if ds["stale"] and open_:
         notes.append(ds["stale_note"])
+    if ds["built_note"] and open_:
+        notes.append(f"Latest bar: {ds['built_note']}.")
     if ds["synthetic"]:
         notes.insert(0, "SYNTHETIC DATA — this chart is a random walk, not the market.")
 
