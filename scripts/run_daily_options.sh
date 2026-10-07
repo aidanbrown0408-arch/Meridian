@@ -72,6 +72,32 @@ if [ -f "$LOG_FILE" ] && grep -q "^===== $today .* paper exit 0 =====" "$LOG_FIL
   exit 0
 fi
 
+# Wait for Yahoo. Its daily history publishes a session's bar hours after
+# the 4 PM close (Mon 10/05's appeared between 8:15 and 11:11 PM; Tue 10/06's
+# was missing at 8:15 PM). Wong also builds the missing bar from intraday
+# data, but this doesn't depend on that working: before trading, a read-only
+# check (no ledger/cache/Slack writes) confirms every stock has the newest
+# completed session. If not, wait and re-check, up to FRESHNESS_TRIES times.
+# If it's still stale after that, run anyway: David blocks the stale tickers,
+# Cornelius freezes them, and David posts a Slack alert -- never a trade on
+# an old price.
+FRESHNESS_TRIES="${MERIDIAN_FRESHNESS_TRIES:-8}"        # 8 x 25 min ~= until 11:35 PM
+FRESHNESS_WAIT_SECS="${MERIDIAN_FRESHNESS_WAIT_SECS:-1500}"
+attempt=1
+while true; do
+  if "$PYTHON_BIN" scripts/check_data_freshness.py >> "$LOG_FILE" 2>&1; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') price data current (check $attempt) -- trading" >> "$LOG_FILE"
+    break
+  fi
+  if [ "$attempt" -ge "$FRESHNESS_TRIES" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') price data still not current after $attempt checks -- running anyway; stale tickers will be frozen and alerted" >> "$LOG_FILE"
+    break
+  fi
+  echo "$(date '+%Y-%m-%d %H:%M:%S') price data not current yet (check $attempt/$FRESHNESS_TRIES) -- retrying in $((FRESHNESS_WAIT_SECS / 60)) min" >> "$LOG_FILE"
+  attempt=$((attempt + 1))
+  sleep "$FRESHNESS_WAIT_SECS"
+done
+
 {
   echo "===== $(date '+%Y-%m-%d %H:%M:%S %Z') paper start ====="
   "$PYTHON_BIN" main.py paper
