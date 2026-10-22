@@ -144,6 +144,35 @@ tr.click:hover td{background:var(--navy3)}
 .rcard .rd{font-size:11.5px;line-height:1.6;color:var(--muted);text-align:left}
 .desk-sub{font-size:11.5px;color:var(--dim);margin:-4px 0 12px}
 
+/* ---------- trade reviews (Jonathan) ---------- */
+.rv{padding:0;margin-bottom:10px;overflow:hidden}
+.rv > summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1.6fr) auto auto;
+              gap:6px 14px;align-items:center;padding:13px 18px}
+.rv > summary::-webkit-details-marker{display:none}
+.rv > summary:hover{background:var(--navy3)}
+.rv > summary:focus-visible{outline:1px solid var(--gold);outline-offset:-2px}
+.rv .rt{font-family:'Playfair Display',Georgia,serif;font-size:15px}
+.rv .rs{font-size:11px;color:var(--muted);margin-top:3px}
+.rv .rp{font-size:15px;text-align:right;white-space:nowrap}
+.rv .rp small{display:block;font-size:10.5px;color:var(--muted)}
+.rv .chev{color:var(--gold);font-size:11px;transition:transform .15s}
+.rv[open] .chev{transform:rotate(90deg)}
+.rv-body{padding:4px 18px 16px;border-top:1px solid var(--line)}
+.rv-facts{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin:12px 0 4px}
+.rv-facts div{font-size:12.5px} .rv-facts span{display:block;font-size:9.5px;letter-spacing:1.2px;
+              text-transform:uppercase;color:var(--muted);margin-bottom:2px}
+.rv-cols{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:12px}
+@media (max-width:760px){.rv-cols{grid-template-columns:1fr}.rv > summary{grid-template-columns:1fr auto}.rv .chev{display:none}}
+.rv h4{font-size:10px;letter-spacing:1.6px;text-transform:uppercase;font-weight:normal;margin:0 0 6px}
+.rv h4.ok{color:var(--green)} .rv h4.no{color:var(--red)} .rv h4.nt{color:var(--muted)}
+.rv ul{margin:0;padding-left:16px} .rv li{font-size:12.5px;line-height:1.6;margin-bottom:4px}
+.rv li b{font-weight:normal;color:var(--gold);font-size:10.5px;letter-spacing:.8px;text-transform:uppercase;margin-right:4px}
+.rv-notes{margin-top:12px}
+.rv-lesson{margin-top:14px;border-left:3px solid var(--gold);background:rgba(0,0,0,.18);
+           border-radius:0 8px 8px 0;padding:9px 12px;font-size:12.5px;line-height:1.6}
+.rv-file{font-size:10.5px;color:var(--dim);margin-top:10px}
+tr.total td{border-top:1px solid var(--line2)}
+
 /* ---------- modal ---------- */
 .overlay{position:fixed;inset:0;background:rgba(5,10,20,.72);display:none;align-items:flex-start;
          justify-content:center;z-index:200;padding:60px 16px;overflow-y:auto}
@@ -554,6 +583,51 @@ details.closed > .tc.full{border-radius:0}
   {% else %}
   <p class="empty">No trades yet{% if ledger %} ({{ ledger.trade_count }} stock trade(s) on record){% endif %}.</p>
   {% endif %}
+
+  <div class="shdr">Trade reviews <span class="aside">Jonathan · every closed trade, both desks</span></div>
+  {% if v.reviews.entries %}
+  <div class="card tcard" style="margin-bottom:12px"><table>
+    <tr><th>Trader</th><th class="num">Trades</th><th class="num">Wins</th><th class="num">Win rate</th>
+        <th class="num">Net P&amp;L</th><th class="num">Avg return</th><th>Recurring issues</th></tr>
+    {% for row in v.reviews.score %}
+    <tr{% if row.total %} class="total"{% endif %}><td>{% if row.total %}<b>{{ row.trader }}</b>{% else %}{{ row.trader }}{% endif %}</td>
+      <td class="num">{{ row.trades }}</td><td class="num">{{ row.wins }}</td><td class="num">{{ row.win_rate }}</td>
+      <td class="num {{ row.cls }}">{{ row.pnl }}</td><td class="num">{{ row.avg }}</td>
+      <td class="mut">{{ row.issues }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% for r in v.reviews.entries %}
+  <details class="card rv"{% if loop.first %} open{% endif %}>
+    <summary>
+      <div><div class="rt">{{ r.label }} <span class="mut" style="font-size:12px">· {{ r.traders }}</span></div>
+        <div class="rs">{{ r.desk }} desk · {{ r.entry }} → {{ r.exit }} · {{ r.days }} day(s){% if r.provisional %} · <span class="gld">provisional</span>{% endif %}</div></div>
+      <div class="rp {{ r.cls }}">{{ r.pnl }}<small>{{ r.pnl_pct }}</small></div>
+      <span class="bdg {{ 'live' if r.outcome == 'win' else ('bench' if r.outcome == 'loss' else 'flat') }}">{{ r.outcome }}</span>
+    </summary>
+    <div class="rv-body">
+      <div class="rv-facts">
+        <div><span>Entry</span>{{ r.entry_price }}</div><div><span>Exit</span>{{ r.exit_price }}</div>
+        <div><span>Size</span>{{ r.size }}</div><div><span>Capital in</span>{{ r.capital }}</div>
+        <div><span>Costs</span>{{ r.costs }}</div>
+      </div>
+      <div class="rv-cols">
+        <div><h4 class="ok">What worked</h4>
+          {% if r.worked %}<ul>{% for f in r.worked %}<li><b>{{ f.area }}</b>{{ f.text }}</li>{% endfor %}</ul>
+          {% else %}<p class="empty">Nothing flagged.</p>{% endif %}</div>
+        <div><h4 class="no">What didn't</h4>
+          {% if r.didnt %}<ul>{% for f in r.didnt %}<li><b>{{ f.area }}</b>{{ f.text }}</li>{% endfor %}</ul>
+          {% else %}<p class="empty">Nothing flagged.</p>{% endif %}</div>
+      </div>
+      {% if r.notes %}<div class="rv-notes"><h4 class="nt">Notes</h4>
+        <ul>{% for f in r.notes %}<li><b>{{ f.area }}</b>{{ f.text }}</li>{% endfor %}</ul></div>{% endif %}
+      <div class="rv-lesson"><span class="eyebrow">Lesson</span><br>{{ r.lesson }}</div>
+      {% if r.file %}<div class="rv-file">reports/trade_reviews/{{ r.file }}</div>{% endif %}
+    </div>
+  </details>
+  {% endfor %}
+  {% else %}
+  <p class="empty">{{ v.reviews.message }}</p>
+  {% endif %}
 </section>
 
 <!-- ======================= AGENTS ======================= -->
@@ -582,6 +656,16 @@ details.closed > .tc.full{border-radius:0}
   {% else %}
   <p class="empty">Augustus, Theo and Joseph report here after <code>python main.py paper</code>.</p>
   {% endif %}
+  <div class="shdr">Review desk <span class="aside">after-action reports on both books</span></div>
+  <div class="agrid">
+    {% for a in v.review_desk %}
+    <div class="card acard">
+      <div><span class="n">{{ a.name }}</span><span class="r">{{ a.role }}</span></div>
+      <div class="m">{{ a.message }}</div>
+      <div class="st"><span class="dot {{ a.level }}"></span>{{ a.status_text }}</div>
+    </div>
+    {% endfor %}
+  </div>
 </section>
 
 <!-- ======================= DETAIL ======================= -->
@@ -696,6 +780,19 @@ details.closed > .tc.full{border-radius:0}
   <div class="shdr">The options desk <span class="aside">the team behind the $1k bucket</span></div>
   <div class="roster">
     {% for m in v.team.options %}
+    <div class="card rcard">
+      {% if m.photo %}<img class="portrait" src="data:image/jpeg;base64,{{ m.photo }}" alt="{{ m.name }}">
+      {% else %}<div class="portrait mono">{{ m.initial }}</div>{% endif %}
+      <div class="rn">{{ m.name }}</div>
+      <div class="rr">{{ m.role }}</div>
+      <div class="st"><span class="dot {{ m.level }}"></span>{{ m.status }}</div>
+      <p class="rd">{{ m.desc }}</p>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="shdr">The review desk <span class="aside">after-action reports on both books</span></div>
+  <div class="roster">
+    {% for m in v.team.review %}
     <div class="card rcard">
       {% if m.photo %}<img class="portrait" src="data:image/jpeg;base64,{{ m.photo }}" alt="{{ m.name }}">
       {% else %}<div class="portrait mono">{{ m.initial }}</div>{% endif %}

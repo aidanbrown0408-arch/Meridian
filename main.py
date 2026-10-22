@@ -7,11 +7,13 @@
     python main.py clear-halt [--options]     # manually clear a killswitch halt
     python main.py bench   --trader X --trigger validation|drift --reason "..."
     python main.py unbench --trader X --trigger validation|drift
+    python main.py review [--rebuild]         # Jonathan: review closed trades, no trading
 
 Research and paper mode share one pipeline: Wong fetches, David blocks broken
 data, Leo backtests with cost modeling, Charles walk-forward validates and
 risk-parity allocates, Greg classifies each ticker's regime and tilts
-capital, and George renders the HTML dashboard + Slack standup. Paper mode
+capital, and George renders the HTML dashboard + Slack standup. Jonathan
+writes an after-action review of every trade that closed. Paper mode
 additionally runs Cornelius's PaperBroker against a persisted $5,000 virtual
 ledger and the lifecycle agent's benching recommendations. `bench`/`unbench`/
 `clear-halt` are the operator's explicit approval mechanism for section 10's
@@ -57,6 +59,7 @@ from agents.options_risk_agent import OptionsRiskAgent
 from agents.portfolio_agent import PaperBroker
 from agents.regime_agent import RegimeAgent, RegimeReport
 from agents.reporting_agent import ReportingAgent
+from agents.review_agent import TradeReviewAgent
 from agents.risk_agent import RiskAgent, RiskReport
 from backtester.engine import results_frame
 from strategies.options_strategy import SignalCheck, build_proposals
@@ -227,10 +230,12 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
     payload = george.standup_payload(market, compliance, risk_report, regime_report,
                                      ledger, recommendations, dashboard.html_path,
                                      new_fills=new_fills)
+    options_ledger = None
     if options_underlyings:
         try:
             leg = _options_leg(config, market, blocked=blocked, notifier=notifier)
             if leg is not None:
+                options_ledger = leg.ledger
                 payload.options_lines = leg.lines
                 payload.books.append(leg.book)
         except Exception as exc:
@@ -245,11 +250,75 @@ def run_paper(config, symbols: list[str] | None = None, post_slack: bool = True)
                 f"Options leg failed this run ({type(exc).__name__}) — see the alert.",
                 "bad")]
 
+    # Jonathan goes last: by now both desks have saved their fills, so any
+    # trade that closed this run is on the ledgers. Read-only; a failure here
+    # never touches a ledger or the standup.
+    _review_leg(config, market, ledger, options_ledger)
+
     if post_slack:
         posted = notifier.standup(payload)
         print(f"  Slack: standup {'posted' if posted else 'not posted (see log)'}, "
               f"{len(notifier.sent)} message(s) sent this run.\n")
     return frame
+
+
+def _review_leg(config, market: dict, stock_ledger, options_ledger=None, rebuild: bool = False):
+    """Jonathan reviews every newly closed trade, then George re-renders the
+    dashboard so the reviews show up. Never raises."""
+    try:
+        if options_ledger is None and config.get("options.enabled", False):
+            options_ledger = OptionsBroker(config).load_ledger()
+        run = TradeReviewAgent(config).run(stock_ledger, options_ledger, market, rebuild=rebuild)
+    except Exception as exc:
+        log.exception("Trade review failed -- ledgers and the standup are unaffected.")
+        print(f"\n  TRADE REVIEWS (Jonathan)\n    Failed this run ({type(exc).__name__}: {exc}).\n")
+        return None
+    _print_reviews(run)
+    if run.new:
+        try:
+            ReportingAgent(config).rerender()
+        except Exception as exc:
+            log.warning("Dashboard re-render after reviews failed (%s).", exc)
+    return run
+
+
+def _print_reviews(run) -> None:
+    print("\n  TRADE REVIEWS (Jonathan)")
+    if not run.new:
+        print(f"    No newly closed trades. {len(run.reviews)} review(s) on file.")
+    for r in run.new:
+        who = ", ".join(r.traders) or "unattributed"
+        print(f"    {r.exit_date}  {r.label:<22} {who:<14} {r.outcome.upper():<5} "
+              f"{'+' if r.pnl >= 0 else '-'}${abs(r.pnl):,.2f} ({r.pnl_pct * 100:+.1f}%)"
+              + ("  [provisional]" if r.provisional else ""))
+        for f in r.worked[:2]:
+            print(f"      + {f.text}")
+        for f in r.didnt[:2]:
+            print(f"      - {f.text}")
+        print(f"      Lesson: {r.lesson}")
+        print(f"      reports/trade_reviews/{r.file}")
+    for rid, why in run.skipped:
+        print(f"    Skipped {rid}: {why}")
+    total = next((row for row in run.scorecard.get("rows", [])
+                  if row["trader"] == "All trades"), None)
+    if total:
+        print(f"    Scorecard: {total['trades']} trade(s), {total['win_rate']:.0%} wins, "
+              f"net {'+' if total['pnl'] >= 0 else '-'}${abs(total['pnl']):,.2f} "
+              "-- reports/trade_reviews/SCORECARD.md")
+    print()
+
+
+def run_review(config, rebuild: bool = False) -> int:
+    """Standalone Jonathan: review closed trades on both ledgers without
+    trading. Reads the ledgers, fetches bars through Wong (cache first),
+    writes reviews, re-renders the dashboard. Never writes a ledger."""
+    stock_ledger = PaperBroker(config).load_ledger()
+    options_ledger = (OptionsBroker(config).load_ledger()
+                      if config.get("options.enabled", False) else None)
+    symbols = TradeReviewAgent.symbols_needed(stock_ledger, options_ledger)
+    market = DataAgent(config).fetch_universe(symbols)
+    run = _review_leg(config, market, stock_ledger, options_ledger, rebuild=rebuild)
+    return 0 if run is not None else 1
 
 
 def _trade_count(broker) -> int:
@@ -763,7 +832,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="main.py", description="Meridian Capital orchestrator")
     parser.add_argument("mode", choices=["research", "paper", "paper-options", "live",
-                                         "killswitch", "clear-halt", "bench", "unbench"])
+                                         "killswitch", "clear-halt", "bench", "unbench",
+                                         "review"])
     parser.add_argument("--config", default=None, help="path to config.yaml")
     parser.add_argument("--symbols", nargs="+", default=None,
                         help="override the configured universe")
@@ -776,6 +846,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trigger", choices=["validation", "drift"], default="drift",
                         help="which bench type applies to bench/unbench")
     parser.add_argument("--reason", default="", help="reason text for 'bench'")
+    parser.add_argument("--rebuild", action="store_true",
+                        help="for 'review': rewrite every trade review, not just new ones")
     parser.add_argument("--no-slack", action="store_true",
                         help="skip posting the standup message even if a webhook is configured")
     parser.add_argument("--verbose", "-v", action="store_true")
@@ -814,6 +886,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_killswitch(config, args.symbols, options=args.options)
     if args.mode == "clear-halt":
         return run_clear_halt(config, options=args.options)
+    if args.mode == "review":
+        return run_review(config, rebuild=args.rebuild)
     if args.mode in ("bench", "unbench"):
         return run_bench(config, args.trader, args.trigger, args.reason,
                          unbench=(args.mode == "unbench"))

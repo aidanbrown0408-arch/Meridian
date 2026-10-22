@@ -44,3 +44,18 @@ def _isolated_reports_dir(monkeypatch, tmp_path):
         self.reports_dir = isolated_dir
 
     monkeypatch.setattr(ReportingAgent, "__init__", patched_init)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_trade_reviews(monkeypatch, tmp_path):
+    """Same isolation for Jonathan: run_paper builds its own TradeReviewAgent,
+    and his default directory is the real reports/trade_reviews. Point it at
+    the same tmp reports dir George uses so both stay consistent."""
+    from agents.review_agent import TradeReviewAgent
+
+    real_init = TradeReviewAgent.__init__
+
+    def patched_init(self, config, reports_dir=None, *args, **kwargs):
+        real_init(self, config, reports_dir or (tmp_path / "reports"), *args, **kwargs)
+
+    monkeypatch.setattr(TradeReviewAgent, "__init__", patched_init)

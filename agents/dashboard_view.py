@@ -74,6 +74,11 @@ TEAM_ROSTER = [
     ("joseph", "Joseph", "Options Broker", "options",
      "Executes Theo-approved SPARK-calls entries against the separate options ledger, marks "
      "positions daily, closes at expiration, and honors the options killswitch."),
+    ("jonathan", "Jonathan", "Trade Review Agent", "review",
+     "Writes the after-action review for every closed trade on both desks: entry and exit, "
+     "best and worst point of the ride, regime fit, costs, and how it did against SPY. Lists "
+     "what worked and what didn't, draws one lesson, and keeps a running scorecard by trader. "
+     "Read-only: never touches a ledger or a signal."),
 ]
 
 _photo_cache: dict[str, str] = {}
@@ -347,9 +352,14 @@ def build_view(c: dict, config=None) -> dict:
                   "bad" if options["halted"] else "ok"),
         ]
 
+    # ---------------------------------------------------------------- reviews
+    reviews = _reviews_view(get("trade_reviews"))
+    review_desk = [_card("Jonathan", "Trade Review", reviews["message"],
+                         reviews["status_text"], reviews["level"])]
+
     # ---------------------------------------------------------------- floor
-    status_by_name = {a["name"]: a for a in stock_desk + options_desk}
-    team = {"stock": [], "options": []}
+    status_by_name = {a["name"]: a for a in stock_desk + options_desk + review_desk}
+    team = {"stock": [], "options": [], "review": []}
     for slug, name, role, desk, desc in TEAM_ROSTER:
         a = status_by_name.get(name)
         team[desk].append({
@@ -372,6 +382,7 @@ def build_view(c: dict, config=None) -> dict:
         "options_chart": (options or {}).get("equity_chart", ""),
         "strategy_rows": strategy_rows, "strats": strats,
         "stock_desk": stock_desk, "options_desk": options_desk,
+        "review_desk": review_desk, "reviews": reviews,
         "team": team,
         "counts": {"alerts": len(alerts),
                    "positions": (len(ledger["positions"]) if ledger else 0) + len(options_open)},
@@ -421,3 +432,60 @@ def _active_trades(stock: dict, options: dict, regimes: list) -> dict:
 def _card(name, role, message, status_text, level) -> dict:
     return {"name": name, "role": role, "message": message,
             "status_text": status_text, "level": level}
+
+
+_AREA_ORDER = ("Result", "Entry", "Ride", "Exit", "Context", "Costs", "Options", "Data")
+
+
+def _reviews_view(summary: dict | None) -> dict:
+    """Jonathan's reviews, shaped for the TRADES tab and his agent card."""
+    if not summary or not summary.get("reviews"):
+        return {"entries": [], "score": [], "count": 0,
+                "message": "No closed trades yet. Jonathan reviews each trade on either desk "
+                           "the run it fully closes.",
+                "status_text": "Waiting on a closed trade", "level": "off"}
+    names = summary.get("issue_names", {})
+    items = []
+    for r in summary["reviews"]:
+        by_kind = {"worked": [], "didnt": [], "note": []}
+        for f in sorted(r.get("findings", []),
+                        key=lambda f: _AREA_ORDER.index(f["area"]) if f["area"] in _AREA_ORDER else 99):
+            by_kind.setdefault(f["kind"], []).append(f)
+        pnl = float(r.get("pnl", 0.0))
+        items.append({
+            "label": r["label"], "desk": "Options" if r["desk"] == "options" else "Stock",
+            "traders": ", ".join(r.get("traders") or []) or "unattributed",
+            "entry": _short_date(r["entry_date"]), "exit": _short_date(r["exit_date"]),
+            "days": r.get("days_held", 0), "outcome": r.get("outcome", "flat"),
+            "pnl": _signed(pnl, 2), "pnl_pct": f"{float(r.get('pnl_pct', 0)) * 100:+.1f}%",
+            "cls": _cls(pnl), "capital": _money(float(r.get("capital", 0)), 2),
+            "entry_price": _money(float(r.get("entry_price", 0)), 2),
+            "exit_price": _money(float(r.get("exit_price", 0)), 2),
+            "size": r.get("size", ""), "costs": _money(float(r.get("costs", 0)), 2),
+            "worked": by_kind["worked"], "didnt": by_kind["didnt"], "notes": by_kind["note"],
+            "lesson": r.get("lesson", ""), "file": r.get("file", ""),
+            "provisional": bool(r.get("provisional")),
+        })
+    score = []
+    for row in (summary.get("scorecard") or {}).get("rows", []):
+        score.append({
+            "trader": row["trader"], "total": row["trader"] == "All trades",
+            "trades": row["trades"], "wins": row["wins"],
+            "win_rate": f"{row['win_rate'] * 100:.0f}%",
+            "pnl": _signed(row["pnl"], 2), "cls": _cls(row["pnl"]),
+            "avg": f"{row['avg_return'] * 100:+.1f}%",
+            "issues": ", ".join(names.get(t, t) for t in row.get("top_issues", [])) or "—",
+        })
+    last = items[0]
+    n = summary.get("count", len(items))
+    return {"entries": items, "score": score, "count": n,
+            "message": (f"{n} closed trade(s) reviewed. Latest: {last['label']} "
+                        f"({last['traders']}) {last['pnl']}, closed {last['exit']}."),
+            "status_text": f"{n} review(s) on file", "level": "ok"}
+
+
+def _short_date(iso: str) -> str:
+    try:
+        return datetime.strptime(iso[:10], "%Y-%m-%d").strftime("%b %d").replace(" 0", " ")
+    except ValueError:
+        return iso

@@ -26,6 +26,7 @@ from agents.dashboard_view import make_view_global
 from agents.trade_charts import build_options_charts, build_stock_charts
 from agents.data_agent import MarketData
 from agents.regime_agent import RegimeReport
+from agents.review_agent import INDEX_FILE as REVIEW_INDEX_FILE, REVIEWS_SUBDIR, dashboard_summary
 from collections import Counter
 
 from agents.risk_agent import RiskReport
@@ -98,6 +99,7 @@ class ReportingAgent:
         if write_file:
             self._save_stock_context(context)
         context["options"] = self._load_options_summary()
+        context["trade_reviews"] = self._load_reviews()
         html = self.env.get_template("report.html.j2").render(**context)
 
         html_path = None
@@ -213,7 +215,15 @@ class ReportingAgent:
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         (self.reports_dir / OPTIONS_STATUS_FILE).write_text(
             json.dumps(summary, indent=2, default=_json_default), encoding="utf-8")
+        return self.rerender(summary)
 
+    def rerender(self, options_summary: dict | None = None) -> Path:
+        """Re-render latest.html and today's dated report from the cached
+        stock context, the options snapshot, and Jonathan's reviews. Used by
+        the options leg and again after Jonathan writes new reviews, so both
+        always land on the page without re-running the stock pipeline."""
+        summary = options_summary if options_summary is not None else self._load_options_summary()
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
         context = self._load_stock_context()
         if context is None:
             context = self._empty_stock_context()
@@ -222,14 +232,26 @@ class ReportingAgent:
                                      f"{context.get('generated_at', 'last')} run.")
         context["generated_at"] = datetime.now().strftime("%A, %B %d %Y — %H:%M")
         context["options"] = summary
+        context["trade_reviews"] = self._load_reviews()
         html = self.env.get_template("report.html.j2").render(**context)
 
         latest = self.reports_dir / "latest.html"
         latest.write_text(html, encoding="utf-8")
         dated = self.reports_dir / f"meridian_{datetime.now():%Y%m%d}.html"
         dated.write_text(html, encoding="utf-8")
-        log.info("Options section refreshed in %s and %s", latest, dated)
+        log.info("Dashboard re-rendered: %s and %s", latest, dated)
         return latest
+
+    def _load_reviews(self) -> dict | None:
+        """Jonathan's trade reviews, if he has written any."""
+        path = self.reports_dir / REVIEWS_SUBDIR / REVIEW_INDEX_FILE
+        if not path.exists():
+            return None
+        try:
+            return dashboard_summary(json.loads(path.read_text(encoding="utf-8")))
+        except Exception as exc:
+            log.warning("Could not read %s (%s) -- trade reviews skipped.", path, exc)
+            return None
 
     def _load_options_summary(self) -> dict | None:
         path = self.reports_dir / OPTIONS_STATUS_FILE
